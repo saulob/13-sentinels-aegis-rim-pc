@@ -45,7 +45,7 @@ $loadExecExit = 30 # 13_sentinels_aegis_rim: sceSystemServiceLoadExec ended the 
 # Rebuilt when the game was installed again or the boot image builder changed.
 function Test-ImageCurrent {
     $newest = (Get-Item -LiteralPath $marker).LastWriteTime
-    foreach ($source in 'launcher\boot_image.cpp', 'launcher\game_profile.h') {
+    foreach ($source in 'launcher\boot_image.cpp', 'launcher\boot_image.h', 'launcher\game_profile.h') {
         $time = (Get-Item -LiteralPath (Join-Path $root $source)).LastWriteTime
         if ($time -gt $newest) { $newest = $time }
     }

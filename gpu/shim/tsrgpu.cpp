@@ -3,6 +3,7 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <cstdio>
 #include <cstring>
 #include <filesystem>
 #include <mutex>
@@ -49,6 +50,8 @@ int32_t* runtime_errno(void);
 void runtime_memory_set_gpu_hooks(RuntimeGpuRange map, RuntimeGpuRange unmap, RuntimeGpuRange invalidate);
 // tsr_gpu_list.cpp
 int tsr_check_vulkan(char* cause, size_t cause_size, char* advice, size_t advice_size);
+// runtime.c
+void runtime_report(void);
 // runtime_log.c
 void runtime_log_flush(void);
 void runtime_log_mark_clean_exit(void);
@@ -236,6 +239,8 @@ extern "C" int tsrgpu_init(const TsrGpuConfig* config) {
         }
         tsr_startup_phase("runtime window closed");
         LOG_INFO(Frontend, "Window closed by user");
+        std::puts("Runtime: window closed by user");
+        runtime_report();
         runtime_log_mark_clean_exit();
         runtime_log_finalize();
         runtime_log_flush();

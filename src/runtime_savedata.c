@@ -68,7 +68,7 @@ static char title_id[16]="UNKNOWN";
 static struct { int used; char host[700], meta[700]; uint64_t blocks; } slots[SLOTS];
 static char memory_path[720];
 static uint64_t memory_size;
-static size_t mounts_done, memory_writes;
+static size_t mounts_done, unmounts_done, memory_writes;
 
 void runtime_savedata_configure(const char *title) {
     if (title && *title) snprintf(title_id,sizeof(title_id),"%s",title);
@@ -129,6 +129,12 @@ int runtime_savedata_icon(int32_t user, const char *dir, char *out, size_t size)
     snprintf(out,size,"%s/%s.sce_sys/icon0.png",base,dir);
     return 0;
 }
+/* DEBUG_SAULO: save-loading freeze diagnostics; failures only, successes are logged where rare. */
+static int32_t traced(const char *operation,const char *subject,int32_t result) {
+    if (result) printf("Runtime: %s(%s) -> 0x%08x\n",operation,subject ? subject : "",(uint32_t)result);
+    return result;
+}
+static const char *point_name(const MountPoint *point) { return point ? point->data : "null"; }
 static ABI int32_t save_initialize(const void *param) { (void)param; initialized=1; return 0; }
 static ABI int32_t save_terminate(void) {
     if (!initialized) return ERR_NOT_INITIALIZED;
@@ -172,26 +178,29 @@ static int32_t mount(int32_t user, const char *title, const DirName *dir, uint64
     return 0;
 }
 static ABI int32_t save_mount(const Mount1 *m, MountResult *result) {
-    if (!m) return ERR_PARAMETER;
-    return mount(m->user,m->title ? m->title->data : NULL,m->dir,m->blocks,m->mode,result);
+    if (!m) return traced("sceSaveDataMount","null",ERR_PARAMETER);
+    return traced("sceSaveDataMount",m->dir ? m->dir->data : "null",
+                  mount(m->user,m->title ? m->title->data : NULL,m->dir,m->blocks,m->mode,result));
 }
 static ABI int32_t save_mount2(const Mount2 *m, MountResult *result) {
-    if (!m) return ERR_PARAMETER;
-    return mount(m->user,NULL,m->dir,m->blocks,m->mode,result);
+    if (!m) return traced("sceSaveDataMount2","null",ERR_PARAMETER);
+    return traced("sceSaveDataMount2",m->dir ? m->dir->data : "null",mount(m->user,NULL,m->dir,m->blocks,m->mode,result));
 }
 static int slot_of(const MountPoint *point) {
     if (!point || strncmp(point->data,"/savedata",9)) return -1;
     int slot=atoi(point->data+9);
     return slot>=0 && slot<SLOTS && slots[slot].used ? slot : -1;
 }
-static ABI int32_t save_umount(const MountPoint *point) {
+static int32_t umount(const MountPoint *point) {
     if (!initialized) return ERR_NOT_INITIALIZED;
     pthread_mutex_lock(&lock);
     int slot=slot_of(point);
-    if (slot>=0) { runtime_file_unmount(point->data); slots[slot].used=0; }
+    if (slot>=0) { runtime_file_unmount(point->data); slots[slot].used=0; ++unmounts_done; }
     pthread_mutex_unlock(&lock);
+    if (slot>=0) printf("Runtime: save data unmounted from %s\n",point->data); /* DEBUG_SAULO */
     return slot>=0 ? 0 : ERR_NOT_FOUND;
 }
+static ABI int32_t save_umount(const MountPoint *point) { return traced("sceSaveDataUmount",point_name(point),umount(point)); }
 #define BLOCK_SIZE 32768
 static uint64_t used_blocks(const char *dir) {
     uint64_t bytes=0;
@@ -205,7 +214,7 @@ static uint64_t used_blocks(const char *dir) {
     closedir(d);
     return (bytes+BLOCK_SIZE-1)/BLOCK_SIZE;
 }
-static ABI int32_t save_get_mount_info(const MountPoint *point, SearchInfo *info) {
+static int32_t get_mount_info(const MountPoint *point, SearchInfo *info) {
     if (!initialized) return ERR_NOT_INITIALIZED;
     if (!info) return ERR_PARAMETER;
     pthread_mutex_lock(&lock);
@@ -217,7 +226,10 @@ static ABI int32_t save_get_mount_info(const MountPoint *point, SearchInfo *info
     info->blocks=total; info->free_blocks=total-used;
     return 0;
 }
-static ABI int32_t save_set_param(const MountPoint *point, uint32_t type, const void *buffer, uint64_t size) {
+static ABI int32_t save_get_mount_info(const MountPoint *point, SearchInfo *info) {
+    return traced("sceSaveDataGetMountInfo",point_name(point),get_mount_info(point,info));
+}
+static int32_t set_param(const MountPoint *point, uint32_t type, const void *buffer, uint64_t size) {
     if (!initialized) return ERR_NOT_INITIALIZED;
     if (!buffer) return ERR_PARAMETER;
     pthread_mutex_lock(&lock);
@@ -239,7 +251,10 @@ bad:
     pthread_mutex_unlock(&lock);
     return ERR_PARAMETER;
 }
-static ABI int32_t save_icon(const MountPoint *point, const Icon *icon) {
+static ABI int32_t save_set_param(const MountPoint *point, uint32_t type, const void *buffer, uint64_t size) {
+    return traced("sceSaveDataSetParam",point_name(point),set_param(point,type,buffer,size));
+}
+static int32_t icon_save(const MountPoint *point, const Icon *icon) {
     if (!initialized) return ERR_NOT_INITIALIZED;
     if (!icon || !icon->buffer) return ERR_PARAMETER;
     pthread_mutex_lock(&lock);
@@ -254,7 +269,10 @@ static ABI int32_t save_icon(const MountPoint *point, const Icon *icon) {
     pthread_mutex_unlock(&lock);
     return r;
 }
-static ABI int32_t save_delete(const Delete *d) {
+static ABI int32_t save_icon(const MountPoint *point, const Icon *icon) {
+    return traced("sceSaveDataSaveIcon",point_name(point),icon_save(point,icon));
+}
+static int32_t delete_save(const Delete *d) {
     if (!initialized) return ERR_NOT_INITIALIZED;
     if (!d || !d->dir || !valid_name(d->dir->data,sizeof(d->dir->data))) return ERR_PARAMETER;
     char base[600], host[640], meta[680];
@@ -267,6 +285,9 @@ static ABI int32_t save_delete(const Delete *d) {
     remove_tree(meta);
     printf("Runtime: save data '%s' deleted\n",d->dir->data);
     return 0;
+}
+static ABI int32_t save_delete(const Delete *d) {
+    return traced("sceSaveDataDelete",d && d->dir ? d->dir->data : "null",delete_save(d));
 }
 /* SQL-LIKE pattern: % any run, _ one character. */
 static int like(const char *s, const char *p) {
@@ -283,7 +304,7 @@ static int compare(const void *a, const void *b) {
           : strcmp(x->name,y->name);
     return sort_order ? -c : c;
 }
-static ABI int32_t save_search(const SearchCond *cond, SearchResult *result) {
+static int32_t search(const SearchCond *cond, SearchResult *result) {
     if (!initialized) return ERR_NOT_INITIALIZED;
     if (!cond || !result) return ERR_PARAMETER;
     char base[600];
@@ -313,6 +334,12 @@ static ABI int32_t save_search(const SearchCond *cond, SearchResult *result) {
     result->set_count=set;
     free(entries);
     return 0;
+}
+static ABI int32_t save_search(const SearchCond *cond, SearchResult *result) {
+    const char *pattern=cond && cond->dir && cond->dir->data[0] ? cond->dir->data : "*";
+    int32_t r=traced("sceSaveDataDirNameSearch",pattern,search(cond,result));
+    if (!r) printf("Runtime: save data search '%s': %u found, %u returned\n",pattern,result->hits,result->set_count); /* DEBUG_SAULO */
+    return r;
 }
 /* SaveDataMemory: one fixed-size blob per user/title. */
 static ABI int32_t memory_setup(int32_t user, uint64_t size, const Param *param) {
@@ -354,8 +381,12 @@ static int32_t memory_io(void *buffer, uint64_t size, int64_t offset, int write)
     pthread_mutex_unlock(&lock);
     return r;
 }
-static ABI int32_t memory_get(int32_t user, void *buffer, uint64_t size, int64_t offset) { (void)user; return memory_io(buffer,size,offset,0); }
-static ABI int32_t memory_set(int32_t user, void *buffer, uint64_t size, int64_t offset) { (void)user; return memory_io(buffer,size,offset,1); }
+static ABI int32_t memory_get(int32_t user, void *buffer, uint64_t size, int64_t offset) {
+    (void)user; return traced("sceSaveDataGetSaveDataMemory","",memory_io(buffer,size,offset,0));
+}
+static ABI int32_t memory_set(int32_t user, void *buffer, uint64_t size, int64_t offset) {
+    (void)user; return traced("sceSaveDataSetSaveDataMemory","",memory_io(buffer,size,offset,1));
+}
 
 static const RuntimeExport exports[]={
     {"sceSaveDataInitialize",save_initialize}, {"sceSaveDataInitialize2",save_initialize},
@@ -367,4 +398,6 @@ static const RuntimeExport exports[]={
     {"sceSaveDataSetSaveDataMemory",memory_set},
 };
 uintptr_t runtime_savedata_resolve(const char *name) { return RUNTIME_LOOKUP(exports,name); }
-void runtime_savedata_report(void) { printf("Runtime: save data mounts=%zu, memory writes=%zu\n",mounts_done,memory_writes); }
+void runtime_savedata_report(void) {
+    printf("Runtime: save data mounts=%zu, unmounts=%zu, memory writes=%zu\n",mounts_done,unmounts_done,memory_writes);
+}

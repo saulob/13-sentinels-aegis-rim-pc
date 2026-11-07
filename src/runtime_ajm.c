@@ -450,7 +450,12 @@ static ABI int32_t ajm_batch_start(uint32_t id, unsigned char *buffer, uint32_t 
     if (!c) { pthread_mutex_unlock(&lock); return ERR_INVALID_CONTEXT; }
     int slot=-1;
     for (int i=0;i<MAX_BATCHES;++i) if (!batches[i].used) { slot=i; break; }
-    if (slot<0) { pthread_mutex_unlock(&lock); return ERR_OUT_OF_RESOURCES; }
+    if (slot<0) {
+        static int reported;
+        if (!reported++) fprintf(stderr,"Runtime: Ajm batch slots exhausted (%d started, none waited)\n",MAX_BATCHES);
+        pthread_mutex_unlock(&lock);
+        return ERR_OUT_OF_RESOURCES;
+    }
     for (unsigned char *p=buffer, *end=buffer+size; p<end;) {
         Chunk chunk; memcpy(&chunk,p,8);
         unsigned char *body=p+8;
@@ -513,5 +518,7 @@ static const RuntimeExport exports[]={
 };
 uintptr_t runtime_ajm_resolve(const char *name) { return RUNTIME_LOOKUP(exports,name); }
 void runtime_ajm_report(void) {
-    printf("Runtime: Ajm batches=%zu, jobs=%zu, ATRAC9 frames decoded=%zu\n",batches_run,jobs_run,frames_decoded);
+    size_t pending=0;
+    for (int i=0;i<MAX_BATCHES;++i) pending+=batches[i].used!=0;
+    printf("Runtime: Ajm batches=%zu, pending=%zu, jobs=%zu, ATRAC9 frames decoded=%zu\n",batches_run,pending,jobs_run,frames_decoded);
 }

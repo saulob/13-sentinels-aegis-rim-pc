@@ -14,6 +14,7 @@
 #include <sched.h>
 #include <setjmp.h>
 #include <errno.h>
+#include <time.h>
 #include <unistd.h>
 #ifdef _WIN32
 #include <windows.h>
@@ -46,6 +47,8 @@ typedef struct GuestThread {
     ThreadAttr attr;
     char name[32];
     int detached, finished, joined, host_owned;
+    const char *wait;
+    uint64_t wait_since_us;
 #ifdef _WIN32
     tsr_jmp_buf exit_jump; /* no SEH unwinding through guest frames */
 #else
@@ -178,6 +181,28 @@ static ThreadAttr *find_attr(ThreadAttr **slot) {
     return found;
 }
 
+static uint64_t monotonic_us(void) {
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC,&now);
+    return (uint64_t)now.tv_sec*1000000+(uint64_t)now.tv_nsec/1000;
+}
+/* Readable by the reporting thread while the owner blocks: a hang report names what each thread waits in. */
+void runtime_thread_wait_begin(const char *what) {
+    GuestThread *t=current;
+    if (!t) return;
+    __atomic_store_n(&t->wait_since_us,monotonic_us(),__ATOMIC_RELAXED);
+    __atomic_store_n(&t->wait,what,__ATOMIC_RELEASE);
+}
+void runtime_thread_wait_end(void) {
+    GuestThread *t=current;
+    if (t) __atomic_store_n(&t->wait,NULL,__ATOMIC_RELEASE);
+}
+const char *runtime_thread_wait_state(void *handle,uint64_t *waited_us) {
+    GuestThread *t=find_thread(handle);
+    const char *what=t ? __atomic_load_n(&t->wait,__ATOMIC_ACQUIRE) : NULL;
+    if (what && waited_us) *waited_us=monotonic_us()-__atomic_load_n(&t->wait_since_us,__ATOMIC_RELAXED);
+    return what;
+}
 static ABI void *thread_self(void) { return runtime_thread_current(); }
 const char *runtime_thread_name(void *handle) {
     GuestThread *t=find_thread(handle);
@@ -357,8 +382,8 @@ static int32_t create(GuestThread **out,ThreadAttr **attr_slot,GuestEntry entry,
 #ifdef _WIN32
     if (t->detached) pthread_detach(t->host);
 #endif
-    pthread_mutex_lock(&lock); ++created; pthread_mutex_unlock(&lock);
-    printf("Runtime: guest thread '%s' created (stack=%llu, prio=%d)\n",t->name,(unsigned long long)stack,t->attr.prio);
+    pthread_mutex_lock(&lock); size_t live=++created-exited; pthread_mutex_unlock(&lock);
+    printf("Runtime: guest thread '%s' created (stack=%llu, prio=%d, live=%zu)\n",t->name,(unsigned long long)stack,t->attr.prio,live);
     return 0;
 }
 static ABI int32_t thread_create(GuestThread **out,ThreadAttr **attr,GuestEntry entry,void *argument,const char *name) {
@@ -370,7 +395,9 @@ static ABI int32_t thread_join(GuestThread *t,void **result) {
     if (t->detached || t->joined) return ERR(22);
     t->joined=1;
     void *value=NULL;
+    runtime_thread_wait_begin("join");
     int e=pthread_join(t->host,&value);
+    runtime_thread_wait_end();
     if (e) { fprintf(stderr,"STOP: host pthread_join failed: %d\n",e); exit(21); }
     if (result) *result=t->result;
 #ifndef _WIN32
@@ -381,13 +408,12 @@ static ABI int32_t thread_join(GuestThread *t,void **result) {
 }
 static ABI int32_t thread_detach(GuestThread *t) {
     if (!find_thread(t)) return ERR(3);
-    if (t->detached) return ERR(22);
+    /* A joined host thread is gone: detaching it again would touch a released handle. */
+    if (t->detached || t->joined) return ERR(22);
 #ifdef _WIN32
     t->detached=1;
     if (!t->host_owned) pthread_detach(t->host);
 #else
-    /* A joined host thread must not reach the reaper, which joins it again. */
-    if (t->joined) return ERR(22);
     pthread_mutex_lock(&lock);
     t->detached=1;
     queue_for_reap_locked(t);
@@ -475,6 +501,15 @@ uintptr_t runtime_thread_resolve(const char *name) {
 }
 void runtime_thread_report(void) {
     pthread_mutex_lock(&lock);
-    printf("Runtime: guest threads created=%zu, exited=%zu, joined=%zu\n",created,exited,joined_count);
+    printf("Runtime: guest threads created=%zu, exited=%zu, joined=%zu, live=%zu\n",created,exited,joined_count,created-exited);
+    uint64_t now=monotonic_us();
+    for (GuestThread *t=threads;t;t=t->next) {
+        if (t->finished) continue;
+        const char *what=__atomic_load_n(&t->wait,__ATOMIC_ACQUIRE);
+        if (!what) { printf("Runtime: thread '%s' running\n",t->name); continue; }
+        uint64_t waited=now-__atomic_load_n(&t->wait_since_us,__ATOMIC_RELAXED);
+        printf("Runtime: thread '%s' waiting in %s for %llu.%03llu s\n",t->name,what,
+               (unsigned long long)(waited/1000000),(unsigned long long)(waited/1000%1000));
+    }
     pthread_mutex_unlock(&lock);
 }

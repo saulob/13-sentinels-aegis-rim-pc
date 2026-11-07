@@ -16,6 +16,7 @@
 #include <pthread.h>
 #include <unistd.h>
 #include <sys/stat.h>
+#include <time.h>
 #ifdef _WIN32
 #include <windows.h>
 /* 64-bit sizes and times; directories are never opened as CRT descriptors. */
@@ -51,7 +52,8 @@ typedef struct { char *names; size_t count, *offsets; unsigned char *types; } Li
 /* A game file the guest reads with byte ranges replaced and possibly past its end; the host file is never written. */
 typedef struct { uint64_t offset, size; const unsigned char *data; } OverlayPatch;
 typedef struct { char guest[512]; uint64_t length; OverlayPatch *patches; size_t count; } Overlay;
-typedef struct { int used, host; Listing *dir; size_t position; char path[512]; const Overlay *overlay; } File;
+typedef struct { int used, host; Listing *dir; size_t position; char path[512]; const Overlay *overlay;
+                 int traced; uint64_t read_bytes, written_bytes; } File;
 typedef struct { char guest[64]; char host[512]; } Mount;
 #define MAX_OVERLAYS 4
 static File files[MAX_FILES];
@@ -61,6 +63,26 @@ static size_t overlay_count;
 static size_t mount_count, opens, reads, writes, missing;
 static uint64_t bytes_read;
 static pthread_mutex_t lock=PTHREAD_MUTEX_INITIALIZER;
+/* DEBUG_SAULO: save-loading freeze diagnostics. */
+static uint64_t last_read_us;
+static int last_read_fd;
+static uint64_t now_us(void) {
+    struct timespec t;
+    clock_gettime(CLOCK_MONOTONIC,&t);
+    return (uint64_t)t.tv_sec*1000000+(uint64_t)t.tv_nsec/1000;
+}
+static int save_path(const char *guest) { return guest && !strncmp(guest,"/savedata",9); }
+static void note_failure(const char *operation,const char *guest,int error) {
+    static int reported;
+    if (error==ENOENT || __atomic_fetch_add(&reported,1,__ATOMIC_RELAXED)>=32) return;
+    printf("Runtime: %s(%s) -> %s\n",operation,guest ? guest : "",strerror(error));
+}
+static void note_read(int fd,File *f,int64_t n) {
+    if (n<=0) return;
+    __atomic_store_n(&last_read_fd,fd,__ATOMIC_RELAXED);
+    __atomic_store_n(&last_read_us,now_us(),__ATOMIC_RELAXED);
+    if (f && f->traced) f->read_bytes+=(uint64_t)n;
+}
 
 int runtime_file_mount(const char *guest,const char *host) {
     pthread_mutex_lock(&lock);
@@ -268,7 +290,19 @@ static int game_path(const char *p) {
            (!strncmp(p,"/hostapp",8) && (!p[8] || p[8]=='/'));
 }
 /* All operations return >=0 or -(host errno); wrappers adapt the convention. */
+static int64_t open_file(const char *guest,int flags,int mode);
 static int64_t do_open(const char *guest,int flags,int mode) {
+    int64_t r=open_file(guest,flags,mode);
+    if (r<0) note_failure("open",guest,(int)-r);
+    if (save_path(guest)) {
+        HostStat s;
+        int64_t size=r>=0 && files[r].host>=0 && !host_fstat(files[r].host,&s) ? (int64_t)s.st_size : -1;
+        printf("Runtime: save file open(%s, flags=0x%x) -> %lld, size %lld\n",guest,flags,(long long)r,(long long)size); /* DEBUG_SAULO */
+        if (r>=0) files[r].traced=1;
+    }
+    return r;
+}
+static int64_t open_file(const char *guest,int flags,int mode) {
     if (game_path(guest) && (flags & (3|0x8|0x200|0x400|0x800))) return -EROFS;
     char path[1024];
     int e=translate(guest,path,sizeof(path));
@@ -325,6 +359,8 @@ static int64_t do_close(int fd) {
     pthread_mutex_lock(&lock);
     File *f=get(fd);
     if (!f) { pthread_mutex_unlock(&lock); return -EBADF; }
+    if (f->traced) printf("Runtime: save file close(%s): read %llu bytes, wrote %llu bytes\n",f->path, /* DEBUG_SAULO */
+                          (unsigned long long)f->read_bytes,(unsigned long long)f->written_bytes);
     if (f->host>=0) close(f->host);
     free_listing(f->dir);
     *f=(File){0};
@@ -407,13 +443,15 @@ static int64_t do_read(int fd,void *buffer,uint64_t size) {
         if (at<0) return -errno;
         int64_t n=overlay_pread(f,buffer,size,at);
         if (n>0 && host_lseek(h,at+n,SEEK_SET)<0) return -errno;
+        note_read(fd,(File *)f,n);
         if (n>0) { __atomic_add_fetch(&reads,1,__ATOMIC_RELAXED); __atomic_add_fetch(&bytes_read,(uint64_t)n,__ATOMIC_RELAXED); }
         observe_read(fd,at,n);
         return n;
     }
     const int64_t at=observed_position(fd,h);
     ssize_t n=host_read(h,buffer,size);
-    if (n<0) return -errno;
+    if (n<0) { note_failure("read",f ? f->path : "",errno); return -errno; }
+    note_read(fd,(File *)f,n);
     __atomic_add_fetch(&reads,1,__ATOMIC_RELAXED); __atomic_add_fetch(&bytes_read,(uint64_t)n,__ATOMIC_RELAXED);
     observe_read(fd,at,n);
     return n;
@@ -425,12 +463,14 @@ static int64_t do_pread(int fd,void *buffer,uint64_t size,int64_t offset) {
     const File *f=get(fd);
     if (f && f->overlay) {
         int64_t n=overlay_pread(f,buffer,size,offset);
+        note_read(fd,(File *)f,n);
         if (n>0) { __atomic_add_fetch(&reads,1,__ATOMIC_RELAXED); __atomic_add_fetch(&bytes_read,(uint64_t)n,__ATOMIC_RELAXED); }
         observe_read(fd,offset,n);
         return n;
     }
     ssize_t n=pread(h,buffer,size,offset);
-    if (n<0) return -errno;
+    if (n<0) { note_failure("pread",f ? f->path : "",errno); return -errno; }
+    note_read(fd,(File *)f,n);
     __atomic_add_fetch(&reads,1,__ATOMIC_RELAXED); __atomic_add_fetch(&bytes_read,(uint64_t)n,__ATOMIC_RELAXED);
     observe_read(fd,offset,n);
     return n;
@@ -439,7 +479,9 @@ static int64_t do_write(int fd,const void *buffer,uint64_t size) {
     int h=host_fd(fd);
     if (h<0) return -EBADF;
     ssize_t n=host_write(h,buffer,size);
-    if (n<0) return -errno;
+    File *f=get(fd);
+    if (n<0) { note_failure("write",f ? f->path : "",errno); return -errno; }
+    if (f && f->traced) f->written_bytes+=(uint64_t)n;
     __atomic_add_fetch(&writes,1,__ATOMIC_RELAXED);
     return n;
 }
@@ -447,7 +489,11 @@ static int64_t do_pwrite(int fd,const void *buffer,uint64_t size,int64_t offset)
     int h=host_fd(fd);
     if (h<0) return -EBADF;
     ssize_t n=pwrite(h,buffer,size,offset);
-    return n<0 ? -errno : n;
+    File *f=get(fd);
+    if (n<0) { note_failure("pwrite",f ? f->path : "",errno); return -errno; }
+    if (f && f->traced) f->written_bytes+=(uint64_t)n;
+    __atomic_add_fetch(&writes,1,__ATOMIC_RELAXED);
+    return n;
 }
 static int64_t do_lseek(int fd,int64_t offset,int whence) {
     File *f=get(fd);
@@ -529,9 +575,19 @@ static int64_t path_op(const char *guest,int op,int mode) {
     int e=translate(guest,path,sizeof(path));
     if (e) return -e;
     int r= op==0 ? mkdir(path,mode ? mode : 0755) : op==1 ? rmdir(path) : unlink(path);
-    return r ? -errno : 0;
+    int64_t result=r ? -errno : 0;
+    if (save_path(guest)) printf("Runtime: save file %s(%s) -> %lld\n",op==0 ? "mkdir" : op==1 ? "rmdir" : "unlink",guest,(long long)result); /* DEBUG_SAULO */
+    else if (result) note_failure(op==0 ? "mkdir" : op==1 ? "rmdir" : "unlink",guest,(int)-result);
+    return result;
 }
+static int64_t rename_path(const char *from,const char *to);
 static int64_t do_rename(const char *from,const char *to) {
+    int64_t r=rename_path(from,to);
+    if (save_path(from) || save_path(to)) printf("Runtime: save file rename(%s, %s) -> %lld\n",from,to,(long long)r); /* DEBUG_SAULO */
+    else if (r) note_failure("rename",from,(int)-r);
+    return r;
+}
+static int64_t rename_path(const char *from,const char *to) {
     if (game_path(from) || game_path(to)) return -EROFS;
     char a[1024],b[1024];
     int e=translate(from,a,sizeof(a));
@@ -644,6 +700,12 @@ int64_t runtime_file_fstat(int fd,void *s) { return do_fstat(fd,s); }
 int64_t runtime_file_getdents(int fd,char *b,uint64_t n,int64_t *base) { return do_getdents(fd,b,n,base); }
 int runtime_file_translate(const char *guest,char *out,size_t size) { return translate(guest,out,size); }
 void runtime_file_report(void) {
-    printf("Runtime: files opened=%zu, reads=%zu (%llu bytes), writes=%zu, not found=%zu\n",
-           opens,reads,(unsigned long long)bytes_read,writes,missing);
+    size_t open_now=0;
+    for (int fd=3;fd<MAX_FILES;++fd) open_now+=files[fd].used!=0;
+    uint64_t last=__atomic_load_n(&last_read_us,__ATOMIC_RELAXED);
+    int fd=__atomic_load_n(&last_read_fd,__ATOMIC_RELAXED);
+    if (last) printf("Runtime: last file read %.1f s ago (%s)\n",(double)(now_us()-last)/1e6, /* DEBUG_SAULO */
+                     fd>=3 && fd<MAX_FILES && files[fd].used ? files[fd].path : "closed");
+    printf("Runtime: files opened=%zu, open now=%zu, reads=%zu (%llu bytes), writes=%zu, not found=%zu\n",
+           opens,open_now,reads,(unsigned long long)bytes_read,writes,missing);
 }

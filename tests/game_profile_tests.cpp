@@ -10,6 +10,7 @@
 #include <string>
 #include <vector>
 
+#include "boot_image.h"
 #include "game_files.h"
 #include "game_install.h"
 
@@ -260,6 +261,41 @@ void TestRealInstall() {
     fs::remove_all(root, ec);
 }
 
+// The local install (game\prepared and build\image), only read: valid as is, rebuilt byte for byte in scratch, and refused
+// with a wrong content profile signature.
+void TestLocalInstall(const fs::path& scratch) {
+    const GameBuild& base = SupportedBuilds()[0];
+    const fs::path repo = TSR_SOURCE_DIR;
+    const GamePaths local{repo / "game" / "prepared" / base.folder, repo / "build" / "image" / base.folder};
+    std::error_code ec;
+    if (!fs::exists(local.app0 / "eboot.bin", ec) || !fs::exists(local.image_dir / "boot.bin", ec)) {
+        std::printf("skipped: no local install of %s %s (game\\prepared and build\\image)\n", base.title_id, base.version);
+        return;
+    }
+    const GameCheck check = CheckGameFiles(local);
+    CHECK(check.state == GameFileState::kValid);
+    CHECK(check.build == &base);
+    CHECK(check.eboot_sha256 == base.eboot_sha256);
+
+    const fs::path rebuilt = scratch / "rebuilt-image";
+    CHECK(BuildBootImage(local.app0, rebuilt).empty());
+    CHECK(Read(rebuilt / "boot.bin") == Read(local.image_dir / "boot.bin"));
+    CHECK(Read(rebuilt / "content.bin") == Read(local.image_dir / "content.bin"));
+    CHECK(Read(rebuilt / "boot.bin").compare(0, kBootImageMagic.size(), kBootImageMagic) == 0);
+    CHECK(CheckGameFiles({local.app0, rebuilt}).state == GameFileState::kValid);
+
+    std::string content = Read(rebuilt / "content.bin");
+    content.replace(0, 3, "DCP");
+    {
+        std::ofstream out(rebuilt / "content.bin", std::ios::binary | std::ios::trunc);
+        out << content;
+    }
+    const GameCheck stale = CheckGameFiles({local.app0, rebuilt});
+    CHECK(stale.state == GameFileState::kMissing);
+    CHECK(stale.detail.find("outdated format") != std::string::npos);
+    std::printf("local install %s %s: valid, boot image reproduced, wrong signature refused\n", base.title_id, base.version);
+}
+
 } // namespace
 
 int main() {
@@ -276,6 +312,7 @@ int main() {
     TestScriptsAgree();
     TestRealPackages(scratch);
     TestRealInstall();
+    TestLocalInstall(scratch);
     fs::remove_all(scratch, ec);
     std::printf("%s\n", failures ? "FAILED" : "all passed");
     return failures ? 1 : 0;

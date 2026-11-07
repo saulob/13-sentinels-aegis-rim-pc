@@ -16,6 +16,9 @@
 #include "core/libraries/kernel/time.h"
 #include "core/libraries/libs.h"
 
+extern "C" void runtime_thread_wait_begin(const char* what);
+extern "C" void runtime_thread_wait_end(void);
+
 namespace Libraries::Kernel {
 
 extern boost::asio::io_context io_context;
@@ -192,6 +195,7 @@ int EqueueInternal::WaitForEvents(OrbisKernelEvent* ev, int num, const OrbisKern
         return count > 0;
     };
 
+    runtime_thread_wait_begin("event queue");
     if (micros == 0) {
         // Wait indefinitely for events
         std::unique_lock lock{m_mutex};
@@ -201,6 +205,7 @@ int EqueueInternal::WaitForEvents(OrbisKernelEvent* ev, int num, const OrbisKern
         std::unique_lock lock{m_mutex};
         m_cond.wait_for(lock, std::chrono::microseconds(micros), predicate);
     }
+    runtime_thread_wait_end();
 
     return count;
 }

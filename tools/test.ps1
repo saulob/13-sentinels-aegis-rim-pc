@@ -1,37 +1,200 @@
 <#
 .SYNOPSIS
-  Builds and runs the focused headless tests: no window, no game launch, no network.
+  Builds and runs the focused headless tests: no window, no game launch, no audio, no network.
 .DESCRIPTION
-  Needs the build configured once by tools\build.ps1. Only the test targets are built, incrementally. Every test runs even
-  after one fails; the exit code is non-zero when any of them failed. Set TSR_TEST_PACKAGES to the folder of the USA
-  packages to include the checks on the real package headers (they are only opened).
+  Needs the build configured once by tools\build.ps1. Only the test targets of the chosen groups are built, incrementally
+  in the existing build folder (never cleaned); the game executable and the video core are not rebuilt. A test whose
+  target did not build fails without running, so an older executable can never pass in its place.
+
+  Every test runs even after one fails; the exit code is non-zero when any of them failed. A step that cannot run here
+  (no installed game, no Python) is SKIPPED with the reason; checks a test leaves out are listed as notes. Nothing is
+  PASS unless it ran.
+
+  The tests only read the installed game (game\prepared, build\image) and the user's save (user\savedata): the save
+  test works on a copy in the build folder. TSR_TEST_PACKAGES names a folder with the real USA packages, which are only
+  opened; TSR_TEST_INSTALL adds a full install into that folder.
+.PARAMETER Group
+  Runtime, SaveData, Packages, Launcher, Audio, Video, Imports, or All (the default). Several can be given.
+.PARAMETER TimeoutSeconds
+  Fails a test that runs longer than this.
+.EXAMPLE
+  .\tools\test.ps1
+  .\tools\test.ps1 -Group SaveData
+  .\tools\test.ps1 -Group Runtime,Audio
 #>
 [CmdletBinding()]
-param()
+param(
+    [string[]]$Group = @('All'),
+    [int]$TimeoutSeconds = 300
+)
 
 . (Join-Path $PSScriptRoot '_common.ps1')
+$root = $script:RepoRoot
+$buildDir = Join-Path $root 'build\cmake\clang64'
+$groupOrder = @('Runtime', 'SaveData', 'Packages', 'Launcher', 'Audio', 'Video', 'Imports')
+# powershell -File passes "-Group A,B" as one string.
+$Group = @($Group | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+foreach ($name in $Group) {
+    if ($name -ne 'All' -and $groupOrder -notcontains $name) { Stop-Tool "Unknown group '$name'. Groups: All, $($groupOrder -join ', ')." }
+}
+
+function Step([string]$GroupName, [string]$Title, [string]$Target = '', [scriptblock]$Block = $null) {
+    [pscustomobject]@{ Group = $GroupName; Title = $Title; Target = $Target; Block = $Block }
+}
+function Result([string]$State, [string]$Reason = '', [string[]]$Notes = @()) {
+    [pscustomobject]@{ State = $State; Reason = $Reason; Notes = $Notes }
+}
+
+# Windows PowerShell turns a native program's stderr into errors, which 'Stop' would make fatal.
+function Invoke-Native([scriptblock]$Command) {
+    $ErrorActionPreference = 'Continue'
+    $lines = @(& $Command 2>&1 | ForEach-Object { "$_" })
+    [pscustomobject]@{ Lines = $lines; Code = $LASTEXITCODE }
+}
+
+function Invoke-Imports([string]$Version, [bool]$Required) {
+    $game = Join-Path $root "game\prepared\CUSA19610-$Version"
+    if (-not (Test-Path -LiteralPath (Join-Path $game 'eboot.bin'))) {
+        $why = "USA $Version is not installed (game\prepared\CUSA19610-$Version)"
+        if ($Required) { return Result 'SKIPPED' $why }
+        return Result 'SKIPPED' "$why; optional"
+    }
+    $python = Get-Python
+    if (-not $python) { return Result 'SKIPPED' 'Python 3 not found (tools\setup.ps1)' }
+    $coverage = Join-Path $root 'scripts\import_coverage.py'
+    $eboot = Invoke-Native { & $python.Exe @($python.Args) '-I' $coverage $game '--eboot-only' }
+    $all = Invoke-Native { & $python.Exe @($python.Args) '-I' $coverage $game }
+    $ebootSummary = Get-ImportSummary $eboot
+    $allSummary = Get-ImportSummary $all
+    if (-not $ebootSummary -or -not $allSummary) {
+        return Result 'FAIL' "import_coverage.py failed: $(($eboot.Lines + $all.Lines) -join ' | ')"
+    }
+    # The eboot's imports must all bind; what only the bundled modules import stops the game only if those paths run.
+    if ($ebootSummary.Unbound -ne 0) {
+        return Result 'FAIL' "$($ebootSummary.Unbound) eboot imports have no binding: $(($eboot.Lines | Select-Object -Skip 1) -join ' | ')"
+    }
+    $libraries = @($all.Lines | Where-Object { $_ -match '^\s+(lib\w+): (\d+)$' } | ForEach-Object { $_.Trim() })
+    return Result 'PASS' '' @("eboot: $($ebootSummary.Text)",
+                              "with bundled modules: $($allSummary.Unbound) unbound ($($libraries -join ', '))")
+}
+function Get-ImportSummary($Run) {
+    $line = $Run.Lines | Where-Object { $_ -match 'imports: .* (\d+) unbound$' } | Select-Object -Last 1
+    if ($Run.Code -ne 0 -or -not $line) { return $null }
+    $null = $line -match '(\d+) unbound$'
+    [pscustomobject]@{ Unbound = [int]$Matches[1]; Text = $line.Substring($line.IndexOf(': ') + 2) }
+}
+
+$steps = @(
+    (Step 'Runtime' 'threads, join/detach, handles, mutexes, condition variables, wait states' 'tsr-runtime-tests'),
+    (Step 'Runtime' 'guest memory (sparse backing, commitment, aliases, release)' 'tsr-memory-windows-tests'),
+    (Step 'Runtime' 'log rotation and closed standard streams' 'tsr-log-tests'),
+    (Step 'Runtime' 'crash report module history' 'tsr-module-history-tests'),
+    (Step 'SaveData' 'mounts, files, handles, errors, interrupted writes, metadata, user save copy' 'tsr-savedata-tests'),
+    (Step 'Packages' 'identities 1.00/1.02, base and update, staging, local install, boot image signatures' 'tsr-game-profile-tests'),
+    (Step 'Launcher' 'tsr.ini persistence, validation, launcher gate, keys, languages, window sizes' 'tsr-launcher-tests'),
+    (Step 'Launcher' 'windowed-mode size and centring' 'tsr-window-tests'),
+    (Step 'Launcher' 'SDL gamepad defaults' 'tsr-sdl-compat-tests'),
+    (Step 'Audio' 'Ajm contexts, instances, batch slots, pending batches, errors' 'tsr-ajm-tests'),
+    (Step 'Video' 'presentation pacing' 'tsr-frame-pacing-tests'),
+    (Step 'Video' 'H.264 decoder (Videodec2)' -Block { Result 'SKIPPED' 'lives in the video core library; no headless test target yet' }),
+    (Step 'Imports' 'USA 1.00 import coverage' -Block { Invoke-Imports '1.00' $true }),
+    (Step 'Imports' 'USA 1.02 import coverage' -Block { Invoke-Imports '1.02' $false })
+)
+
+$wanted = if ($Group -contains 'All') { $groupOrder } else { $groupOrder | Where-Object { $Group -contains $_ } }
+$steps = @($steps | Where-Object { $wanted -contains $_.Group })
+$targets = @($steps | Where-Object { $_.Target } | ForEach-Object { $_.Target } | Select-Object -Unique)
+
+function Invoke-Captured([string]$Exe) {
+    $info = New-Object System.Diagnostics.ProcessStartInfo
+    # One stream, so the output keeps its order.
+    $info.FileName = Join-Path $env:SystemRoot 'System32\cmd.exe'
+    $info.Arguments = "/d /s /c `"`"$Exe`" 2>&1`""
+    $info.WorkingDirectory = Split-Path $Exe -Parent
+    $info.UseShellExecute = $false
+    $info.RedirectStandardOutput = $true
+    $info.RedirectStandardError = $true
+    $info.CreateNoWindow = $true
+    $process = [System.Diagnostics.Process]::Start($info)
+    $out = $process.StandardOutput.ReadToEndAsync()
+    $err = $process.StandardError.ReadToEndAsync()
+    $finished = $process.WaitForExit($TimeoutSeconds * 1000)
+    if (-not $finished) { $process.Kill(); $process.WaitForExit() }
+    $lines = @(($out.Result + $err.Result) -split "`r?`n" | Where-Object { $_ -ne '' })
+    [pscustomobject]@{ Code = $process.ExitCode; Lines = $lines; TimedOut = -not $finished }
+}
+
+function Invoke-TestExe([string]$Target, [hashtable]$Built) {
+    if (-not $Built[$Target]) { return Result 'FAIL' "$Target did not build (see the build output above); the old executable was not run" }
+    $exe = Join-Path $buildDir "bin\$Target.exe"
+    if (-not (Test-Path -LiteralPath $exe)) { return Result 'FAIL' "$exe is missing after the build" }
+    $run = Invoke-Captured $exe
+    $notes = @($run.Lines | Where-Object { $_ -match '^(skipped|not covered):' -or $_ -match '^(user save copy|local install)' })
+    if ($run.TimedOut) { return Result 'FAIL' "timed out after $TimeoutSeconds s" $notes }
+    if ($run.Code -ne 0) {
+        $run.Lines | ForEach-Object { Write-Host "    $_" }
+        $fails = @($run.Lines | Where-Object { $_ -match '^FAIL' } | Select-Object -First 3)
+        $why = if ($fails) { $fails -join '; ' } else { "exit code $($run.Code)" }
+        return Result 'FAIL' $why $notes
+    }
+    $last = $run.Lines | Select-Object -Last 1
+    if ($last) { Write-Host "    $last" -ForegroundColor DarkGray }
+    return Result 'PASS' '' $notes
+}
+
 $tc = Resolve-Toolchain 'auto'
 $env:PATH = "$($tc.Bin);$env:PATH"
-$buildDir = Join-Path $script:RepoRoot 'build\cmake\clang64'
-if (-not (Test-Path -LiteralPath (Join-Path $buildDir 'build.ninja'))) { Stop-Tool 'Run tools\build.ps1 once first.' }
+if (-not (Test-Path -LiteralPath (Join-Path $buildDir 'build.ninja'))) { Stop-Tool 'Run tools\build.ps1 once first: the tests reuse its build folder.' }
 
-$tests = [ordered]@{
-    'tsr-game-profile-tests'   = 'Package identity, base and update, staging'
-    'tsr-memory-windows-tests' = 'Sparse guest memory'
-    'tsr-log-tests'            = 'Log rotation and closed standard streams'
-    'tsr-module-history-tests' = 'Crash report module history'
-    'tsr-sdl-compat-tests'     = 'SDL gamepad defaults'
-    'tsr-window-tests'         = 'Windowed-mode size and centring'
-    'tsr-frame-pacing-tests'   = 'Presentation pacing'
+$started = Get-Date
+$built = @{}
+if ($targets.Count) {
+    Sync-GpuDependencies
+    Write-Step "Building $($targets.Count) test target(s) incrementally"
+    $build = Invoke-Native { & ninja -C $buildDir -k 0 @targets }
+    if ($build.Code -ne 0) { $build.Lines | Where-Object { $_ -notmatch 'Deprecation|cmake_minimum_required|compatibility with|^\s*$' } | ForEach-Object { Write-Host "    $_" } }
+    else { $build.Lines | Select-Object -Last 1 | ForEach-Object { Write-Host "    $_" -ForegroundColor DarkGray } }
+    foreach ($target in $targets) {
+        $built[$target] = $build.Code -eq 0 -or (Invoke-Native { & ninja -C $buildDir $target }).Code -eq 0
+    }
 }
-& ninja -C $buildDir @($tests.Keys)
-if ($LASTEXITCODE -ne 0) { Stop-Tool 'Building the tests failed' }
 
-$failed = [System.Collections.Generic.List[string]]::new()
-foreach ($name in $tests.Keys) {
-    Write-Step $tests[$name]
-    & (Join-Path $buildDir "bin\$name.exe")
-    if ($LASTEXITCODE -ne 0) { $failed.Add($name) }
+$results = foreach ($step in $steps) {
+    Write-Step "$($step.Group): $($step.Title)"
+    $clock = [System.Diagnostics.Stopwatch]::StartNew()
+    $result = if ($step.Block) { & $step.Block } else { Invoke-TestExe $step.Target $built }
+    $clock.Stop()
+    switch ($result.State) {
+        'PASS' { Write-Host "    PASS ($([math]::Round($clock.Elapsed.TotalSeconds, 1)) s)" -ForegroundColor Green }
+        'FAIL' { Write-Host "    FAIL: $($result.Reason)" -ForegroundColor Red }
+        default { Write-Host "    SKIPPED: $($result.Reason)" -ForegroundColor Yellow }
+    }
+    [pscustomobject]@{ Step = $step; Result = $result; Seconds = $clock.Elapsed.TotalSeconds }
 }
-if ($failed.Count) { Stop-Tool "Failed: $($failed -join ', ')" }
-Write-Host 'All focused tests passed.' -ForegroundColor Green
+
+Write-Host ''
+Write-Host '13 Sentinels: Aegis Rim - Test Suite' -ForegroundColor Cyan
+Write-Host ''
+$counts = @{ PASS = 0; FAIL = 0; SKIPPED = 0; PARTIAL = 0 }
+foreach ($name in $wanted) {
+    $mine = @($results | Where-Object { $_.Step.Group -eq $name })
+    $failed = @($mine | Where-Object { $_.Result.State -eq 'FAIL' })
+    $skipped = @($mine | Where-Object { $_.Result.State -eq 'SKIPPED' })
+    $state = if ($failed) { 'FAIL' } elseif ($skipped.Count -eq $mine.Count) { 'SKIPPED' } elseif ($skipped) { 'PARTIAL' } else { 'PASS' }
+    $counts[$state]++
+    $seconds = ($mine | Measure-Object -Property Seconds -Sum).Sum
+    $color = @{ PASS = 'Green'; FAIL = 'Red'; SKIPPED = 'Yellow'; PARTIAL = 'Yellow' }[$state]
+    Write-Host ('{0,-12}{1,-9}{2,6:N1} s' -f $name, $state, $seconds) -ForegroundColor $color
+    foreach ($entry in $failed) { Write-Host "    failed: $($entry.Step.Title): $($entry.Result.Reason)" -ForegroundColor Red }
+    foreach ($entry in $skipped) { Write-Host "    skipped: $($entry.Step.Title): $($entry.Result.Reason)" -ForegroundColor Yellow }
+    foreach ($entry in $mine) { foreach ($note in $entry.Result.Notes) { Write-Host "    note: $note" -ForegroundColor DarkGray } }
+}
+Write-Host ''
+Write-Host "Total: $($wanted.Count) groups"
+Write-Host "Passed: $($counts.PASS)"
+if ($counts.PARTIAL) { Write-Host "Passed with skipped steps: $($counts.PARTIAL)" }
+Write-Host "Failed: $($counts.FAIL)"
+Write-Host "Skipped: $($counts.SKIPPED)"
+Write-Host ("Duration: {0:N1} s" -f ((Get-Date) - $started).TotalSeconds)
+if ($counts.FAIL) { exit 1 }
+exit 0

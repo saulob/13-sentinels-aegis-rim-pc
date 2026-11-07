@@ -121,6 +121,11 @@ int runtime_savedata_icon(int32_t user, const char *dir, char *out, size_t size)
 void runtime_thread_attach_host(const char *name);
 /* Name of a guest thread handle, or NULL when it is not a live thread. */
 const char *runtime_thread_name(void *handle);
+/* `what` must be a string literal: it is read after the call by the hang report. */
+void runtime_thread_wait_begin(const char *what);
+void runtime_thread_wait_end(void);
+/* What a live thread is blocked in, or NULL when running. */
+const char *runtime_thread_wait_state(void *handle, uint64_t *waited_us);
 uint64_t runtime_memory_flexible_available(void);
 /* Windows: in guest functions that keep data below rsp (the System V red zone), accesses that can
  * fault run with rsp 128 lower, so the exception frame of a GPU page-tracking fault cannot overwrite

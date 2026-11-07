@@ -109,13 +109,16 @@ uint64_t runtime_process_time_us(void) { return process_time(); }
 uint64_t runtime_process_time_counter(void) { return process_time_counter(); }
 uint64_t runtime_tsc_frequency(void) { return tsc_frequency(); }
 static int sleep_ns(uint64_t ns) {
+    int r=0;
+    runtime_thread_wait_begin("sleep");
 #ifdef _WIN32
     compat_sleep_ns(ns);
 #else
     struct timespec t={.tv_sec=(time_t)(ns/1000000000),.tv_nsec=(long)(ns%1000000000)};
-    while (nanosleep(&t,&t)) if (errno!=EINTR) return errno;
+    while (nanosleep(&t,&t)) if (errno!=EINTR) { r=errno; break; }
 #endif
-    return 0;
+    runtime_thread_wait_end();
+    return r;
 }
 static ABI int32_t kernel_usleep(uint32_t usec) { sleep_ns((uint64_t)usec*1000); return 0; }
 static ABI int32_t posix_usleep(uint32_t usec) { sleep_ns((uint64_t)usec*1000); return 0; }
