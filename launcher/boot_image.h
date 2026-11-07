@@ -5,8 +5,13 @@
 
 #include <filesystem>
 #include <string>
+#include <string_view>
 
 namespace tsr {
+
+// Must match the signatures src/loader.c checks.
+inline constexpr std::string_view kBootImageMagic = "TSRBOOT1";
+inline constexpr std::string_view kContentProfileMagic = "TSRCONT1";
 
 // Writes the three files into `out` (created when missing). Empty on success, else the reason.
 std::string BuildBootImage(const std::filesystem::path& game, const std::filesystem::path& out);

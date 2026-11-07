@@ -10,6 +10,7 @@
 #include <system_error>
 #include <vector>
 
+#include "boot_image.h"
 #include "crypto.h"
 #include "tsr_launcher.h"
 #include "utf8.h"
@@ -83,6 +84,12 @@ std::string Printable(const std::string& text) {
 bool IsRegularNonEmpty(const std::filesystem::path& path) {
     std::error_code ec;
     return std::filesystem::is_regular_file(path, ec) && std::filesystem::file_size(path, ec) > 0 && !ec;
+}
+
+bool StartsWith(const std::filesystem::path& path, std::string_view magic) {
+    std::ifstream in(path, std::ios::binary);
+    std::string head(magic.size(), '\0');
+    return in.read(head.data(), static_cast<std::streamsize>(head.size())) && head == magic;
 }
 
 GameCheck Result(GameFileState state, std::string detail, std::string sha = {}, const GameBuild* build = nullptr) {
@@ -472,6 +479,10 @@ GameCheck CheckGameFiles(const GamePaths& paths, std::span<const GameBuild> buil
         if (!IsRegularNonEmpty(paths.image_dir / name)) {
             return Result(GameFileState::kMissing, std::string("boot image: missing ") + name, sha, &build);
         }
+    }
+    if (!StartsWith(paths.image_dir / "boot.bin", kBootImageMagic) ||
+        !StartsWith(paths.image_dir / "content.bin", kContentProfileMagic)) {
+        return Result(GameFileState::kMissing, "boot image: outdated format, install the game again", sha, &build);
     }
     std::string report;
     if (!ReadSmallFile(paths.image_dir / "image.json", report)) {

@@ -750,7 +750,7 @@ void Build(const std::filesystem::path& game, const std::filesystem::path& out) 
     }
 
     Bytes boot;
-    boot.insert(boot.end(), {'D', 'C', 'P', 'B', 'O', 'O', 'T', '1'});
+    boot.insert(boot.end(), kBootImageMagic.begin(), kBootImageMagic.end());
     for (const uint64_t value : {uint64_t(builder.image.size()), main.entry, uint64_t(builder.segments.size()),
                                  uint64_t(builder.relocs.size()), uint64_t(names.size()), uint64_t(init_env_ret),
                                  procparam.vaddr, tls_values[0], tls_values[1], tls_values[2], tls_values[3],
@@ -829,7 +829,7 @@ void Build(const std::filesystem::path& game, const std::filesystem::path& out) 
     }
 
     Bytes content;
-    content.insert(content.end(), {'D', 'C', 'P', 'C', 'O', 'N', 'T', '1'});
+    content.insert(content.end(), kContentProfileMagic.begin(), kContentProfileMagic.end());
     Append(content, uint32_t(3)); // the full game SKU
     for (const uint32_t param : params) {
         Append(content, param);
