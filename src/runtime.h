@@ -1,0 +1,133 @@
+#ifndef TSR_RUNTIME_H
+#define TSR_RUNTIME_H
+#include <stdint.h>
+#include <stddef.h>
+#ifdef _WIN32
+#include "compat_win.h"
+/* No signals on Windows: the exception handler resumes the thread in tsr_longjmp
+ * (gpu/shim/tsr_toggles.h uses the same buffer type). */
+typedef tsr_jmp_buf sigjmp_buf;
+#define sigsetjmp(buffer, save) tsr_setjmp(buffer)
+#else
+#include <setjmp.h>
+#endif
+/* Recovery point for speculative guest memory reads on this thread (probe.c fault handler). */
+extern __thread sigjmp_buf *runtime_fault_recover;
+#define ABI __attribute__((sysv_abi))
+typedef void (ABI *GuestCallback)(void);
+void runtime_start(uint64_t capabilities);
+uintptr_t runtime_resolve(const char *name, int is_data);
+void runtime_report(void);
+void runtime_finalize(void *dso);
+uintptr_t runtime_mutex_resolve(const char *name);
+void runtime_mutex_report(void);
+uintptr_t runtime_memory_resolve(const char *name);
+void runtime_memory_report(void);
+int runtime_memory_is_mapped(uintptr_t address, uint64_t size);
+const char *runtime_import_name(const char *name);
+uintptr_t runtime_rwlock_resolve(const char *name);
+void runtime_rwlock_report(void);
+void runtime_set_libc_tls(const void *data, uint64_t filesz, uint64_t memsz);
+void runtime_set_module_tls(uint64_t module, const void *data, uint64_t filesz, uint64_t memsz);
+void runtime_set_procparam(void *param);
+void **runtime_application_heap_api(void);
+uintptr_t runtime_thread_resolve(const char *name);
+void runtime_thread_report(void);
+void runtime_set_main_tls(const void *data, uint64_t filesz, uint64_t memsz, uint64_t align);
+void runtime_thread_attach_main(void);
+int32_t *runtime_errno(void);
+uintptr_t runtime_sema_resolve(const char *name);
+uintptr_t runtime_fiber_resolve(const char *name);
+void runtime_fiber_report(void);
+uintptr_t runtime_audio_resolve(const char *name);
+void runtime_audio_report(void);
+uintptr_t runtime_tsr_resolve(const char *name);
+void runtime_tsr_set_neo_mode(int on);
+void runtime_set_language(int ps4_language);
+void runtime_user_login(int player);
+int runtime_user_player(int32_t user);
+uintptr_t runtime_font_resolve(const char *name);
+uintptr_t runtime_eventflag_resolve(const char *name);
+uintptr_t runtime_rwlock_resolve(const char *name);
+uintptr_t runtime_extra_resolve(const char *name);
+uintptr_t runtime_ajm_resolve(const char *name);
+void runtime_ajm_report(void);
+/* The tsr.ini whose keyboard bindings the pad reads, once, at the first sample. */
+void runtime_pad_set_settings(const char *settings_file);
+/* 1 when the slot is Player 1 or has a live gamepad; 0 for a slot the game may drive with AI. */
+int runtime_pad_slot_human(int slot);
+uintptr_t runtime_pad_resolve(const char *name);
+void runtime_pad_report(void);
+void runtime_sema_report(void);
+unsigned runtime_sema_waiters(uint32_t id);
+uintptr_t runtime_time_resolve(const char *name);
+void runtime_content_configure(const uint32_t values[5]);
+uintptr_t runtime_content_resolve(const char *name);
+void runtime_content_report(void);
+typedef struct { const char *name; void *function; } RuntimeExport;
+#define RUNTIME_LOOKUP(table, nid) runtime_lookup(table, sizeof(table)/sizeof(*(table)), nid)
+const char *runtime_symbol(const char *nid);
+uintptr_t runtime_lookup(const RuntimeExport *table, size_t count, const char *nid);
+uintptr_t runtime_kernel_resolve(const char *name);
+uintptr_t runtime_file_resolve(const char *name);
+uintptr_t runtime_services_resolve(const char *name);
+void runtime_file_report(void);
+void runtime_file_configure(const char *app0, const char *user);
+int runtime_file_mount(const char *guest, const char *host);
+void runtime_file_unmount(const char *guest);
+typedef struct {
+    uint64_t offset, size;
+    const void *data;
+} RuntimeFilePatch;
+/* The guest sees `guest` as `length` bytes: the host file, zeros past its end, and the patches on top. The patches'
+ * data is borrowed and must outlive the process. Before the guest starts only; -1 with nothing registered when the
+ * table is full, the path already has one or a patch falls outside `length`. */
+int runtime_file_overlay(const char *guest, uint64_t length, const RuntimeFilePatch *patches, size_t count);
+int runtime_file_translate(const char *guest, char *out, size_t size);
+int64_t runtime_file_open(const char *path, int flags, int mode);
+int64_t runtime_file_close(int fd);
+int64_t runtime_file_read(int fd, void *buffer, uint64_t size);
+int64_t runtime_file_pread(int fd, void *buffer, uint64_t size, int64_t offset);
+/* Called after every successful read with the guest path, the file offset and the size (diagnostics). It runs on
+ * the reading thread and must not block. */
+void runtime_file_set_read_observer(void (*observe)(const char *guest, uint64_t offset, uint64_t size));
+int64_t runtime_file_write(int fd, const void *buffer, uint64_t size);
+int64_t runtime_file_lseek(int fd, int64_t offset, int whence);
+int64_t runtime_file_stat(const char *path, void *guest_stat);
+int64_t runtime_file_fstat(int fd, void *guest_stat);
+int64_t runtime_file_getdents(int fd, char *buffer, uint64_t size, int64_t *base);
+void runtime_thread_keys_cleanup(void);
+/* Guest-visible errno values are FreeBSD's. */
+int32_t runtime_guest_errno(int host_errno);
+void *runtime_low_map(size_t size, int prot);
+#ifndef _WIN32
+/* Stacks below 1 TiB with a guard page at the bottom; released stacks are reused. */
+void *runtime_stack_acquire(size_t size);
+void runtime_stack_release(void *stack, size_t size);
+#endif
+/* Windows: reserves the PS4 user address range as a placeholder (no-op elsewhere). */
+void runtime_memory_reserve(void);
+/* Creates the guest memory pool and commits a first page; nonzero when that fails. */
+int runtime_memory_prepare(void);
+uintptr_t runtime_rtc_resolve(const char *name);
+const char *runtime_file_user_dir(void);
+void runtime_savedata_configure(const char *title);
+uintptr_t runtime_savedata_resolve(const char *name);
+void runtime_savedata_report(void);
+/* OrbisSaveDataParam (1328 bytes) of a save directory of the current title. */
+#define RUNTIME_SAVE_PARAM_SIZE 1328
+int runtime_savedata_param(int32_t user, const char *dir, void *param);
+int runtime_savedata_icon(int32_t user, const char *dir, char *out, size_t size);
+void runtime_thread_attach_host(const char *name);
+/* Name of a guest thread handle, or NULL when it is not a live thread. */
+const char *runtime_thread_name(void *handle);
+uint64_t runtime_memory_flexible_available(void);
+/* Windows: in guest functions that keep data below rsp (the System V red zone), accesses that can
+ * fault run with rsp 128 lower, so the exception frame of a GPU page-tracking fault cannot overwrite
+ * that data (runtime_redzone.c). segments: {address, size, flags} triples, flag 1 = executable. */
+uint64_t runtime_redzone_install(unsigned char *image, uint64_t size, const uint64_t *segments, uint64_t count);
+/* After a handled GPU page-tracking fault, before the thread resumes. */
+void runtime_redzone_after_fault(void *context);
+/* 1 when rip is in a red-zone stub; *site (may be null) gets the guest offset it replaces. */
+int runtime_redzone_site(uintptr_t rip, uint64_t *site);
+#endif
