@@ -170,6 +170,7 @@ $steps = @(
     (Step 'Launcher' 'tsr.ini persistence, validation, launcher gate, keys, languages, window sizes' 'tsr-launcher-tests'),
     (Step 'Launcher' 'Bug Report: JSON, service address, log choice, privacy filter, report and preview, client against a stand-in transport, My Reports, nothing sent on its own' 'tsr-bug-report-tests'),
     (Step 'Launcher' 'Bug Report service (Node, disposable database): submission, receipts, limits, retention, admin, dashboard, and the launcher''s own request' -Block { Invoke-BugReportService }),
+    (Step 'Launcher' 'application icon and launcher palette (static): SVG, ICO, PNGs, resources, relink, license, action and link colors' -Block { Invoke-Script 'testspp_icon_tests.ps1' }),
     (Step 'Launcher' 'windowed-mode size and centring' 'tsr-window-tests'),
     (Step 'Launcher' 'SDL gamepad defaults' 'tsr-sdl-compat-tests'),
     (Step 'Updater' 'versions, release JSON, SHA-256, ZIP safety, staging, protected game and user data, jobs, install, rollback, the 13S release contract' 'tsr-update-tests'),

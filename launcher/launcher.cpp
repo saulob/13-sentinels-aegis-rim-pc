@@ -68,6 +68,8 @@ namespace {
 const char* TranslateLauncherText(const char* english) { return Tr(english); }
 
 const ImVec4 kAccent = ImVec4(kAccentRed / 255.0f, kAccentGreen / 255.0f, kAccentBlue / 255.0f, 1.0f);
+const ImVec4 kActionEdge = ImVec4(kTealRed / 255.0f, kTealGreen / 255.0f, kTealBlue / 255.0f, 1.0f);
+const ImVec4 kActionLink = ImVec4(kLightCyanRed / 255.0f, kLightCyanGreen / 255.0f, kLightCyanBlue / 255.0f, 1.0f);
 constexpr double kPlayFeedbackSeconds = 0.4;
 constexpr char kPortTitle[] = "13 Sentinels: Aegis Rim PC Port";
 constexpr char kInstallTitle[] = "Select your 13 Sentinels: Aegis Rim base game package";
@@ -165,7 +167,7 @@ std::vector<std::string> ListGpuNames() {
 }
 
 trg::Theme LauncherTheme() {
-    trg::Theme theme = trg::Theme::Midnight().WithAccent(kAccent);
+    trg::Theme theme = trg::Theme::Midnight().WithAccent(kAccent).WithAction(kAccent, kActionEdge, kActionLink);
     // Warnings stay red-orange so they are never mistaken for the accent.
     theme.warn = ImVec4(0.47f, 0.18f, 0.10f, 1.0f);
     theme.warn_dot = ImVec4(1.0f, 0.45f, 0.30f, 1.0f);
