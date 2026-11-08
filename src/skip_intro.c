@@ -7,8 +7,9 @@
 
 #include "code_signature.h"
 
-/* The logo scene's wait: the layout-finished test, then the button poll; either advances to the fade-out state. */
-static const short kScene[] = {
+/* The logo scene's wait: the layout-finished test, then the button poll; either advances to the fade-out state. The
+ * Western executables branch to the advance; the Japanese and Asian ones fall through to it and branch to the wait. */
+static const short kSceneWestern[] = {
     0x48, 0x8d, 0x05, CODE_ANY, CODE_ANY, CODE_ANY, CODE_ANY,       /* lea rax, [rip+...] */
     0x8b, 0x40, 0x34,                                               /* mov eax, [rax+0x34] */
     0x41, 0x85, 0x87, CODE_ANY, CODE_ANY, 0x00, 0x00,               /* test [r15+...], eax */
@@ -19,7 +20,42 @@ static const short kScene[] = {
     0x0f, 0x85, 0xca, 0x00, 0x00, 0x00,                             /* jne advance */
     0xe9, 0xd6, 0x00, 0x00, 0x00,                                   /* jmp stay */
 };
-enum { kCallInScene = 26, kCallLength = 5 };
+
+static const short kSceneRegisterTest[] = {
+    0x41, 0x8b, 0x87, CODE_ANY, CODE_ANY, 0x00, 0x00,               /* mov eax, [r15+...] */
+    0x48, 0x8d, 0x0d, CODE_ANY, CODE_ANY, CODE_ANY, CODE_ANY,       /* lea rcx, [rip+...] */
+    0x85, 0x41, 0x34,                                               /* test [rcx+0x34], eax */
+    0x75, 0x0c,                                                     /* jne advance */
+    0x48, 0x89, 0xdf,                                               /* mov rdi, rbx */
+    0xe8, CODE_ANY, CODE_ANY, CODE_ANY, CODE_ANY,                   /* call any_player_pressed */
+    0x84, 0xc0,                                                     /* test al, al */
+    0x74, CODE_ANY,                                                 /* je stay */
+    0x0f, 0xb7, 0x43, 0x16,                                         /* advance: movzx eax, word [rbx+0x16] */
+};
+
+static const short kSceneFallThrough[] = {
+    0x48, 0x8d, 0x05, CODE_ANY, CODE_ANY, CODE_ANY, CODE_ANY,       /* lea rax, [rip+...] */
+    0x8b, 0x40, 0x34,                                               /* mov eax, [rax+0x34] */
+    0x41, 0x85, 0x87, CODE_ANY, CODE_ANY, 0x00, 0x00,               /* test [r15+...], eax */
+    0x75, 0x10,                                                     /* jne advance */
+    0x48, 0x89, 0xdf,                                               /* mov rdi, rbx */
+    0xe8, CODE_ANY, CODE_ANY, CODE_ANY, CODE_ANY,                   /* call any_player_pressed */
+    0x84, 0xc0,                                                     /* test al, al */
+    0x0f, 0x84, CODE_ANY, CODE_ANY, 0x00, 0x00,                     /* je stay */
+    0x0f, 0xb7, 0x43, 0x16,                                         /* advance: movzx eax, word [rbx+0x16] */
+};
+
+typedef struct {
+    const short *code;
+    size_t length;
+    uint32_t call; /* offset of the poll call in the scene code */
+} SceneShape;
+
+#define SHAPE(code, call) {code, sizeof(code) / sizeof(*code), call}
+static const SceneShape kWestern = SHAPE(kSceneWestern, 26);
+static const SceneShape kRegisterTest = SHAPE(kSceneRegisterTest, 22);
+static const SceneShape kFallThrough = SHAPE(kSceneFallThrough, 22);
+enum { kCallLength = 5 };
 
 /* any_player_pressed: walks the player pads through the scene's input mask. */
 static const short kPoll[] = {
@@ -29,14 +65,19 @@ static const short kPoll[] = {
 
 typedef struct {
     const char *build;
+    const SceneShape *shape;
     uint32_t scene;
     uint32_t poll;
 } BuildSite;
 
 static const BuildSite kBuilds[] = {
-    {"CUSA19610-1.00", 0x3aff4d, 0x36f400},
-    {"CUSA19610-1.01", 0x3b143d, 0x36fd90},
-    {"CUSA19610-1.02", 0x36a92d, 0x32a410},
+    {"CUSA19610-1.00", &kWestern, 0x3aff4d, 0x36f400},
+    {"CUSA19610-1.01", &kWestern, 0x3b143d, 0x36fd90},
+    {"CUSA19610-1.02", &kWestern, 0x36a92d, 0x32a410},
+    {"CUSA10602-1.00", &kRegisterTest, 0x3478a5, 0x309cc0},
+    {"CUSA10602-1.03", &kFallThrough, 0x3af6c5, 0x36f480},
+    {"CUSA10602-1.04", &kFallThrough, 0x368d02, 0x329db0},
+    {"CUSA18093-1.00", &kRegisterTest, 0x3b9bc5, 0x37a840},
 };
 
 static atomic_int armed;
@@ -71,13 +112,13 @@ SkipIntroLocate skip_intro_locate_why(const uint8_t *image, uint64_t size, const
     }
     if (!known) return SKIP_INTRO_UNKNOWN_BUILD;
     uint64_t first = 0;
-    const size_t scenes = code_signature_count(image, size, kScene, sizeof(kScene) / sizeof(*kScene), &first);
+    const size_t scenes = code_signature_count(image, size, known->shape->code, known->shape->length, &first);
     if (scenes == 0) return mismatch(why, why_size, "logo scene code: not found");
     if (scenes > 1) return mismatch(why, why_size, "logo scene code: ambiguous (%zu matches, expected 1)", scenes);
     if (first != known->scene)
         return mismatch(why, why_size, "logo scene code: unique match at 0x%llx, expected 0x%x", (unsigned long long)first,
                         (unsigned)known->scene);
-    const uint32_t call = known->scene + kCallInScene;
+    const uint32_t call = known->scene + known->shape->call;
     int32_t displacement;
     memcpy(&displacement, image + call + 1, 4);
     const int64_t target = (int64_t)call + kCallLength + displacement;

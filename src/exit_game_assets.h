@@ -1,6 +1,7 @@
 /* The Exit Game title row's data (assets/exit_game/title-labels.bin, scripts/exit_game): per text language the label
- * art as BC7 blocks for the title's text atlas and the edits that point the title layout's third row at it. Both are
- * applied to the game's own loaded copies, each only when every byte it replaces is the expected original. */
+ * art as BC7 blocks for the title's text atlas and, per layout of that atlas (Japanese has the base game's and the
+ * updates'), the edits that point the title layout's third row at it. Both are applied to the game's own loaded
+ * copies, each only when every byte it replaces is the expected original. */
 #ifndef TSR_EXIT_GAME_ASSETS_H
 #define TSR_EXIT_GAME_ASSETS_H
 
@@ -11,8 +12,9 @@
 extern "C" {
 #endif
 
-#define EXIT_GAME_MAX_LANGUAGES 8
+#define EXIT_GAME_MAX_LANGUAGES 12
 #define EXIT_GAME_MAX_REGIONS 4
+#define EXIT_GAME_MAX_LAYOUTS 4
 #define EXIT_GAME_LAYOUT_SECTIONS 11
 
 typedef struct {
@@ -24,14 +26,20 @@ typedef struct {
 } ExitGameRegion;
 
 typedef struct {
-    char key[13]; /* the launcher's text language key */
-    uint32_t width, height, pitch, data_size;
-    uint32_t reference[4], reference_crc; /* blocks of the language's own second row */
-    uint32_t region_count;
-    ExitGameRegion regions[EXIT_GAME_MAX_REGIONS];
+    char tag[13]; /* empty when the atlas has one layout */
     uint32_t sections[EXIT_GAME_LAYOUT_SECTIONS], layout_size;
     uint32_t edit_count;
     const uint8_t *edits;
+} ExitGameLayout;
+
+typedef struct {
+    char key[13]; /* the launcher's text language key */
+    uint32_t width, height, pitch, data_size;
+    uint32_t reference[4], reference_crc; /* blocks that tell the language's atlas from the others */
+    uint32_t region_count;
+    ExitGameRegion regions[EXIT_GAME_MAX_REGIONS];
+    uint32_t layout_count;
+    ExitGameLayout layouts[EXIT_GAME_MAX_LAYOUTS];
 } ExitGameLabels;
 
 typedef struct {
@@ -61,8 +69,10 @@ typedef enum {
 ExitGamePatchStatus exit_game_texture_patch(const ExitGameLabels *labels, uint32_t width, uint32_t height, uint32_t pitch,
                                             uint32_t size, uint8_t *pixels);
 
-/* The loaded title layout: its section table holds pointers into the same buffer. */
-ExitGamePatchStatus exit_game_layout_patch(const ExitGameLabels *labels, uint8_t *layout);
+/* The loaded title layout: its section table holds pointers into the same buffer. Only the language's layout whose
+ * every original record is in place is applied; `which` (optional) gets the index of the layout that fits or, on a
+ * mismatch, of the one whose sections fit. */
+ExitGamePatchStatus exit_game_layout_patch(const ExitGameLabels *labels, uint8_t *layout, int *which);
 
 #ifdef __cplusplus
 }

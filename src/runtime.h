@@ -74,6 +74,7 @@ uintptr_t runtime_services_resolve(const char *name);
 void runtime_file_report(void);
 void runtime_file_configure(const char *app0, const char *user);
 int runtime_file_mount(const char *guest, const char *host);
+int runtime_file_mount_read_only(const char *guest, const char *host);
 void runtime_file_unmount(const char *guest);
 typedef struct {
     uint64_t offset, size;

@@ -39,9 +39,10 @@ struct GameCheck {
 // The "scope" of a folder's preparation marker: "full", "core" (development) or empty.
 std::string PreparationScope(const std::filesystem::path& app0);
 GamePaths BuildPaths(const GameRoots& roots, const GameBuild& build);
-// The effective active build: the highest-precedence (SupportedBuilds() order: base, then its updates from oldest to
-// newest) build whose folder is completely prepared, or nullptr when none is. This alone decides which build plays,
-// so installing or removing another build never silently changes it to a lower one.
+// The effective active build: of the title (region) installed last, the highest-precedence (SupportedBuilds() order:
+// base, then its updates from oldest to newest) build whose folder is completely prepared, or nullptr when none is.
+// This alone decides which build plays, so installing or removing another build of a title never silently changes it
+// to a lower one; the regions' folders are separate and never overwrite each other.
 const GameBuild* LastPreparedBuild(const GameRoots& roots, std::span<const GameBuild> builds = SupportedBuilds());
 // Every supported build whose complete folder is prepared, in profile order.
 std::vector<const GameBuild*> PreparedBuilds(const GameRoots& roots, std::span<const GameBuild> builds = SupportedBuilds());

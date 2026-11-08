@@ -73,7 +73,7 @@ const ImVec4 kActionLink = ImVec4(kLightCyanRed / 255.0f, kLightCyanGreen / 255.
 constexpr double kPlayFeedbackSeconds = 0.4;
 constexpr char kPortTitle[] = "13 Sentinels: Aegis Rim PC Port";
 constexpr char kInstallTitle[] = "Select your 13 Sentinels: Aegis Rim base game package";
-constexpr char kInstallUpdateTitle[] = "Select your 13 Sentinels: Aegis Rim 1.01 or 1.02 update package";
+constexpr char kInstallUpdateTitle[] = "Select your 13 Sentinels: Aegis Rim update package";
 const std::string kPortUrl = std::string("https://") + kPortRepository;
 
 ImGuiKey ImGuiKeyOf(int scancode) {
@@ -93,7 +93,7 @@ int ScancodeOf(ImGuiKey key) {
 std::string GameFilesHelp() {
     return Tr("Select your own legally obtained package (.pkg). Supported: ") + SupportedBuildsText() +
            Tr(". The base game is required and plays on its own; the update is optional and can be added later. The game is "
-              "unpacked into the game folder next to the program (about 4.5 GB). No game files are included. Reinstalling "
+              "unpacked into the game folder next to the program (up to 5 GB). No game files are included. Reinstalling "
               "keeps your saves and settings.");
 }
 #ifdef _WIN32
@@ -265,7 +265,11 @@ GameCheck CheckAndLog(const GamePaths& paths) {
     Log("game files in %s: %s%s%s%s", Utf8(paths.app0).c_str(), StateName(check.state), check.detail.empty() ? "" : " (",
         check.detail.c_str(), check.detail.empty() ? "" : ")");
     if (check.build) {
-        Log("build %s, main archive %s", check.build->label, check.build->regional_archive);
+        const PackageLayer& finished = FinishedLayer(*check.build);
+        Log("build %s: %s, region %s, APP_VER %s, VERSION %s, %s, main archive %s, executable code of %s", check.build->label,
+            check.build->title_id, check.build->region, finished.app_ver, finished.sfo_version,
+            IsUpdateBuild(*check.build) ? "base with update" : "base game", check.build->regional_archive,
+            CodeBuildKey(*check.build).c_str());
     }
     if (!check.eboot_sha256.empty()) {
         Log("eboot.bin SHA-256 %s", check.eboot_sha256.c_str());
@@ -310,7 +314,8 @@ class LauncherApp {
 public:
     LauncherApp(const TsrLauncherConfig& config, LauncherSettings& settings, GamePaths paths, GameCheck check)
         : config_(config), settings_(settings), paths_(std::move(paths)), files_(check.state), build_(check.build),
-          languages_(LanguagesOf(paths_.app0, build_)), installed_builds_(PreparedBuilds(RootsOf(paths_))) {}
+          eboot_sha256_(check.eboot_sha256), languages_(LanguagesOf(paths_.app0, build_)),
+          installed_builds_(PreparedBuilds(RootsOf(paths_))) {}
 
     bool game_process_started() const { return game_process_started_; }
 
@@ -565,6 +570,7 @@ private:
         const GameCheck check = CheckAndLog(paths_);
         files_ = check.state;
         build_ = check.build;
+        eboot_sha256_ = check.eboot_sha256;
         languages_ = LanguagesOf(paths_.app0, build_);
         installed_builds_ = PreparedBuilds(RootsOf(paths_));
     }
@@ -710,13 +716,6 @@ private:
                                                   : StatusTitle(files_);
         const std::string detail = ready && build_ ? BuildMetadataText(*build_) : StatusDetail(files_);
         ui.StatusCard(ready ? trg::Status::kReady : trg::Status::kAttention, title.c_str(), detail.c_str());
-        if (ready && build_ && build_->support_note[0]) {
-            ui.Spacer(4);
-            ImGui::PushStyleColor(ImGuiCol_Text, ui.theme().warn_dot);
-            ImGui::TextWrapped("%s", Tr(build_->support_note));
-            ImGui::PopStyleColor();
-            ui.Spacer(4);
-        }
         if (!install_failure_.empty()) {
             ui.Spacer(4);
             ImGui::PushStyleColor(ImGuiCol_Text, ui.theme().warn_dot);
@@ -742,6 +741,16 @@ private:
                 BrowseAndInstall(PackageKind::kUpdate);
             }
             ImGui::EndDisabled();
+            if (build_ && !InstalledUpdatesOf(RootsOf(paths_), build_->title_id).empty()) {
+                const std::string question = std::string(Tr("Remove installed updates?")) + "\n\n" +
+                                             Tr("This removes installed game updates for ") + build_->title_id +
+                                             Tr(" and returns the game to version 1.00") + "\n" +
+                                             Tr("The base game and save data will not be removed");
+                if (ui.ConfirmRow("Remove update", "Returns to the base game; saves are kept.", "Remove Update...",
+                                  question.c_str(), "Remove Update")) {
+                    RemoveUpdates();
+                }
+            }
             ui.EndRows();
         }
         ui.Toggle("Show this launcher", kShowLauncherHelp, kShowLauncherKey, true, "Off", "On");
@@ -759,6 +768,29 @@ private:
         }
         return std::system("command -v zenity >/dev/null 2>&1 || command -v kdialog >/dev/null 2>&1") != 0;
 #endif
+    }
+
+    void RemoveUpdates() {
+        if (install_.running() || prompts_.running() || !build_) {
+            return;
+        }
+        if (OtherProcessRunning(CurrentExecutablePath())) {
+            launcher_->SetStatus(Tr("Close the game before removing installed updates"), 6.0);
+            return;
+        }
+        const std::string title_id = build_->title_id;
+        const RemoveAllResult removed = RemoveInstalledUpdatesOf(RootsOf(paths_), title_id);
+        Log("remove updates of %s: %zu removed, %zu failed%s%s", title_id.c_str(), removed.removed, removed.failed,
+            removed.detail.empty() ? "" : ": ", removed.detail.c_str());
+        paths_ = ActiveBuildPaths(RootsOf(paths_));
+        Recheck();
+        if (trophy_page_) {
+            trophy_page_->Invalidate();
+        }
+        RefreshPrompts();
+        launcher_->SetStatus(removed.ok() ? Tr("Installed updates removed")
+                                          : Tr("Some installed updates could not be removed. Close anything using the game files and try again."),
+                             removed.ok() ? 6.0 : 8.0);
     }
 
     void BrowseAndInstall(PackageKind kind) {
@@ -808,7 +840,7 @@ private:
                     return !task.cancelled();
                 };
                 *outcome = InstallGame(source, roots, hooks);
-                return outcome->ok() ? std::string() : std::string(DescribeInstall(outcome->status).title);
+                return outcome->ok() ? std::string() : std::string(DescribeInstall(*outcome).title);
             });
         if (started) {
             Log("installing the game from %s", picked.c_str());
@@ -824,7 +856,7 @@ private:
         if (!outcome) {
             return;
         }
-        const InstallMessage message = DescribeInstall(outcome->status);
+        const InstallMessage message = DescribeInstall(*outcome);
         if (!outcome->recognition.empty()) {
             Log("%s", outcome->recognition.c_str());
         }
@@ -1285,7 +1317,7 @@ private:
         static const std::string operating_system = OperatingSystemText();
         const bool known = build_ && files_ == GameFileState::kValid;
         return {TSR_PORT_VERSION, known ? build_->label : "Not installed", known ? build_->version : "",
-                known ? build_->title_id : "", known ? build_->eboot_sha256 : "", operating_system};
+                known ? build_->title_id : "", known ? eboot_sha256_ : "", operating_system};
     }
 
     void PageBugReport(trg::Ui& ui) { incident_page_->Draw(ui, CurrentReportFacts()); }
@@ -1365,6 +1397,7 @@ private:
     GamePaths paths_;
     GameFileState files_;
     const GameBuild* build_ = nullptr;
+    std::string eboot_sha256_; // as read: an alternate packaging of a build has its own
     LanguageSupport languages_;
     LauncherHost host_;
     TsrPng::Image header_art_image_;

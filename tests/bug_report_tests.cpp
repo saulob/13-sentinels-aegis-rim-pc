@@ -9,6 +9,7 @@
 #include <regex>
 #include <sstream>
 #include <string>
+#include <tuple>
 #include <vector>
 
 #include "game_profile.h"
@@ -329,6 +330,20 @@ void TestReport(const fs::path& scratch) {
     CHECK(odd_package && odd_package->Value("game_version").empty() && odd_package->Value("cusa").empty() &&
           odd_package->Value("eboot_sha256").empty() && odd_package->Value("game_build") == "Build with  control");
     if (odd_package) CheckAgainstServiceRules(*odd_package);
+
+    // Every region's build reaches the service as itself: CUSA, version and the build's own label.
+    for (const auto& [label, version, cusa] : {std::tuple{"CUSA19620 1.01 Europe", "1.01", "CUSA19620"},
+                                               std::tuple{"CUSA10602 1.04 Japan", "1.04", "CUSA10602"},
+                                               std::tuple{"CUSA18093 1.00 Asia", "1.00", "CUSA18093"}}) {
+        ReportFacts regional = Report();
+        regional.game_build = label;
+        regional.game_version = version;
+        regional.cusa = cusa;
+        const auto regional_package = BuildIncidentPackage(description, log, regional, Facts());
+        CHECK(regional_package && regional_package->Value("game_build") == label &&
+              regional_package->Value("game_version") == version && regional_package->Value("cusa") == cusa);
+        if (regional_package) CheckAgainstServiceRules(*regional_package);
+    }
 
     const fs::path saved = SaveIncidentReport(package, scratch / "saved");
     CHECK(!saved.empty() && Read(saved) == preview);

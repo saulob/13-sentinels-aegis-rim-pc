@@ -21,6 +21,7 @@
 #include "common/types.h"
 #include "common/unique_function.h"
 #include "video_core/amdgpu/cb_db_extent.h"
+#include "video_core/amdgpu/command_snapshot.h"
 #include "video_core/amdgpu/regs.h"
 
 namespace VideoCore {
@@ -101,8 +102,6 @@ public:
 
     void SubmitDone() noexcept {
         std::scoped_lock lk{submit_mutex};
-        mapped_queues[GfxQueueId].ccb_buffer_offset = 0;
-        mapped_queues[GfxQueueId].dcb_buffer_offset = 0;
         submit_done = true;
         submit_cv.notify_one();
     }
@@ -146,14 +145,6 @@ public:
             ++num_commands;
             submit_cv.notify_one();
         }
-    }
-
-    void ReserveCopyBufferSpace() {
-        GpuQueue& gfx_queue = mapped_queues[GfxQueueId];
-        std::scoped_lock lk(gfx_queue.m_access);
-        constexpr size_t GfxReservedSize = 2_MB >> 2;
-        gfx_queue.ccb_buffer.reserve(GfxReservedSize);
-        gfx_queue.dcb_buffer.reserve(GfxReservedSize);
     }
 
     inline ComputeProgram& GetCsRegs() {
@@ -214,9 +205,9 @@ private:
         Handle handle;
     };
 
-    using CmdBuffer = std::pair<std::span<const u32>, std::span<const u32>>;
-    CmdBuffer CopyCmdBuffers(std::span<const u32> dcb, std::span<const u32> ccb);
-    Task ProcessGraphics(std::span<const u32> dcb, std::span<const u32> ccb, u64 seq = NoSeq);
+    /// `guest_dcb`: where a snapshot `dcb` was submitted from; null when `dcb` is read in place.
+    Task ProcessGraphics(std::span<const u32> dcb, std::span<const u32> ccb, u64 seq = NoSeq,
+                         const u32* guest_dcb = nullptr);
     Task ProcessCeUpdate(std::span<const u32> ccb);
     template <bool is_indirect = false>
     Task ProcessCompute(std::span<const u32> acb, u32 vqid);
@@ -224,16 +215,17 @@ private:
     void ProcessCommands();
     void Process(std::stop_token stoken);
 
+    struct Submission {
+        Task::Handle task;
+        std::unique_ptr<CommandSnapshot> commands; ///< graphics only; kept until the task is done
+    };
     struct GpuQueue {
         std::mutex m_access{};
-        std::atomic<u32> dcb_buffer_offset;
-        std::atomic<u32> ccb_buffer_offset;
-        std::vector<u32> dcb_buffer;
-        std::vector<u32> ccb_buffer;
-        std::queue<Task::Handle> submits{};
+        std::queue<Submission> submits{};
         ComputeProgram cs_state{};
     };
     std::array<GpuQueue, NumTotalQueues> mapped_queues{};
+    CommandSnapshots command_snapshots;
     u32 num_mapped_queues{1u}; // GFX is always available
 
     VAddr indirect_args_addr{};

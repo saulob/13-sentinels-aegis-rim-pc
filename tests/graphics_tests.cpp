@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <cstdlib>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
@@ -63,9 +64,14 @@ uint32_t Imm(const std::vector<unsigned char>& image, size_t at) {
     return value;
 }
 
-// The game image the loader runs: the tail of boot.bin, image_bytes long (image.json).
+// The game image the loader runs: the tail of boot.bin, image_bytes long (image.json); build\image, else the build's
+// folder under TSR_TEST_IMAGES.
 std::vector<unsigned char> GameImage(const GameBuild& build) {
-    const fs::path folder = fs::path(TSR_SOURCE_DIR) / "build" / "image" / build.folder;
+    fs::path folder = fs::path(TSR_SOURCE_DIR) / "build" / "image" / build.folder;
+    const char* extra = std::getenv("TSR_TEST_IMAGES");
+    if (!fs::exists(folder / "boot.bin") && extra && *extra) {
+        folder = fs::path(extra) / build.folder;
+    }
     const std::string meta = ReadText(folder / "image.json");
     const size_t key = meta.find("\"image_bytes\":");
     if (key == std::string::npos) {
@@ -99,8 +105,10 @@ void TestResolutionTable() {
 // Each build: six sceKernelIsNeoMode choices, each `call; cmp eax, 1; mov reg, original; mov reg, Pro value`.
 void TestSiteTables() {
     std::set<std::pair<uint32_t, std::string>> offsets;
-    for (const char* version : {"1.00", "1.01", "1.02"}) {
-        const GameBuild& build = Build(version);
+    std::set<std::string> codes;
+    for (const GameBuild& build : SupportedBuilds()) {
+        const std::string version = CodeBuildKey(build);
+        codes.insert(version);
         CHECK(!RestrictedToNativeResolution(&build));
         CHECK(build.resolution_sites.size() == 12);
         int widths = 0, heights = 0;
@@ -117,16 +125,24 @@ void TestSiteTables() {
         }
         CHECK(widths == 6 && heights == 6);
     }
-    // The executables differ: no offset is assumed to carry over.
-    CHECK(offsets.size() == 36);
+    // The executables differ: no offset is assumed to carry over. Builds that run another build's code share its table.
+    CHECK(codes.size() == 7 && offsets.size() == codes.size() * 12);
+    for (const GameBuild& build : SupportedBuilds()) {
+        if (build.code_build[0]) {
+            for (const GameBuild& other : SupportedBuilds()) {
+                if (CodeBuildKey(other) == build.code_build && !other.code_build[0]) {
+                    CHECK(build.resolution_sites.data() == other.resolution_sites.data());
+                }
+            }
+        }
+    }
     const auto& a = Build("1.00").resolution_sites;
     const auto& c = Build("1.02").resolution_sites;
     CHECK(a[0].offset != c[0].offset);
 }
 
 void TestRealImages() {
-    for (const char* version : {"1.00", "1.01", "1.02"}) {
-        const GameBuild& build = Build(version);
+    for (const GameBuild& build : SupportedBuilds()) {
         std::vector<unsigned char> image = GameImage(build);
         if (image.empty()) {
             std::printf("skipped: real boot image %s is not prepared (build\\image\\%s)\n", build.label, build.folder);

@@ -22,7 +22,8 @@ static void test_real_sites(void) {
     if (have_base) {
         CHECK(skip_intro_locate(base.bytes, base.size, "CUSA19610-1.00", &site) == SKIP_INTRO_FOUND && site == 0x3aff67);
         CHECK(skip_intro_locate(base.bytes, base.size, "CUSA19610-1.02", &site) == SKIP_INTRO_MISMATCH);
-        CHECK(skip_intro_locate(base.bytes, base.size, "CUSA10602-1.00", &site) == SKIP_INTRO_UNKNOWN_BUILD);
+        CHECK(skip_intro_locate(base.bytes, base.size, "CUSA10602-1.00", &site) == SKIP_INTRO_MISMATCH);
+        CHECK(skip_intro_locate(base.bytes, base.size, "CUSA99999-1.00", &site) == SKIP_INTRO_UNKNOWN_BUILD);
         CHECK(skip_intro_locate(base.bytes, base.size, NULL, &site) == SKIP_INTRO_UNKNOWN_BUILD);
         CHECK(skip_intro_locate(base.bytes, base.size, "CUSA19610-1.01", &site) == SKIP_INTRO_MISMATCH);
 
@@ -36,7 +37,8 @@ static void test_real_sites(void) {
         CHECK(skip_intro_locate_why(base.bytes, base.size, "CUSA19610-1.00", &site, why, sizeof(why)) == SKIP_INTRO_FOUND && !why[0]);
         CHECK(skip_intro_locate_why(base.bytes, base.size, "CUSA19610-1.02", &site, why, sizeof(why)) == SKIP_INTRO_MISMATCH &&
               !strcmp(why, "logo scene code: unique match at 0x3aff4d, expected 0x36a92d"));
-        CHECK(skip_intro_locate_why(base.bytes, base.size, "CUSA10602-1.00", &site, why, sizeof(why)) == SKIP_INTRO_UNKNOWN_BUILD);
+        CHECK(skip_intro_locate_why(base.bytes, base.size, "CUSA10602-1.00", &site, why, sizeof(why)) == SKIP_INTRO_MISMATCH &&
+              !strcmp(why, "logo scene code: not found"));
         base.bytes[0x3aff67 + 1] ^= 0x10;
         CHECK(skip_intro_locate_why(base.bytes, base.size, "CUSA19610-1.00", &site, why, sizeof(why)) == SKIP_INTRO_MISMATCH &&
               strstr(why, "button poll call: target 0x") && strstr(why, "expected 0x36f400"));
@@ -89,6 +91,44 @@ static void test_real_sites(void) {
     free(update.bytes);
 }
 
+/* The Japanese and Asian executables (TSR_TEST_IMAGES): each scene shape matches once, at its build's site only. */
+static void test_regional_sites(void) {
+    static const struct {
+        const char *build;
+        uint32_t site;
+    } kRegional[] = {
+        {"CUSA10602-1.00", 0x3478bb}, {"CUSA10602-1.03", 0x3af6db}, {"CUSA10602-1.04", 0x368d18}, {"CUSA18093-1.00", 0x3b9bdb},
+    };
+    const size_t count = sizeof(kRegional) / sizeof(*kRegional);
+    size_t verified = 0;
+    for (size_t i = 0; i < count; ++i) {
+        BootImage image = {0};
+        if (!boot_image_load_build(kRegional[i].build, "", &image)) {
+            printf("skipped: no %s boot image (TSR_TEST_IMAGES)\n", kRegional[i].build);
+            continue;
+        }
+        uint32_t site = 0;
+        CHECK(skip_intro_locate(image.bytes, image.size, kRegional[i].build, &site) == SKIP_INTRO_FOUND &&
+              site == kRegional[i].site);
+        for (size_t j = 0; j < count; ++j)
+            if (j != i) CHECK(skip_intro_locate(image.bytes, image.size, kRegional[j].build, &site) == SKIP_INTRO_MISMATCH);
+        CHECK(skip_intro_locate(image.bytes, image.size, "CUSA19610-1.00", &site) == SKIP_INTRO_MISMATCH);
+        const uint8_t saved = image.bytes[kRegional[i].site + 1];
+        image.bytes[kRegional[i].site + 1] ^= 0x10;
+        CHECK(skip_intro_locate(image.bytes, image.size, kRegional[i].build, &site) == SKIP_INTRO_MISMATCH);
+        image.bytes[kRegional[i].site + 1] = saved;
+        uint8_t *grown = realloc(image.bytes, image.size + 4096);
+        if (!grown) break;
+        image.bytes = grown;
+        CHECK(skip_intro_install(image.bytes, image.size, image.entry, kRegional[i].build, image.bytes + image.size, 4096) == 1);
+        CHECK(image.bytes[kRegional[i].site] == 0xe9);
+        CHECK(skip_intro_claim() == 1);
+        free(image.bytes);
+        ++verified;
+    }
+    if (verified == count) printf("real boot images: Japan 1.00, 1.03, 1.04 and Asia 1.00 Skip Intro sites verified\n");
+}
+
 /* A synthetic "logo poll" caller: push rbp; mov rbp,rsp; call poll; pop rbp; ret, with poll = xor eax,eax; ret. */
 static void test_skip_intro_runs(uint8_t *code) {
     static const uint8_t caller[] = {0x55, 0x48, 0x89, 0xe5, 0xe8, 0, 0, 0, 0, 0x5d, 0xc3};
@@ -112,6 +152,7 @@ static void test_skip_intro_runs(uint8_t *code) {
 
 int main(void) {
     test_real_sites();
+    test_regional_sites();
     uint8_t *code = VirtualAlloc(NULL, 2 * 8192, MEM_RESERVE | MEM_COMMIT, PAGE_EXECUTE_READWRITE);
     if (!code) {
         printf("FAIL: no executable memory\n");

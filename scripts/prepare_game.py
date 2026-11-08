@@ -146,7 +146,7 @@ def main():
     eboot = view / profile['entry']
     if not eboot.is_file():
         problems.append(f'{profile["entry"]} missing')
-    elif sha256(eboot) != build['eboot_sha256']:
+    elif not game_profiles.accepts_eboot(build, sha256(eboot)):
         problems.append(f'{profile["entry"]} sha256 does not match the known {version} build')
     for name in profile['modules']:
         if not (view / 'sce_module' / name).is_file():

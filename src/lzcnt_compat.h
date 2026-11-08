@@ -14,8 +14,8 @@
 extern "C" {
 #endif
 
-#define LZCNT_SITE_MAX 75
-#define LZCNT_BUILD_COUNT 3
+#define LZCNT_SITE_MAX 77
+#define LZCNT_BUILD_COUNT 7
 #define LZCNT_SHAPE_MAX 10
 
 /* The bytes replaced at a site: whole instructions, at least a jmp rel32 long, with an LZCNT at `first` and a second

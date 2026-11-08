@@ -20,7 +20,6 @@ public:
     u32 GetReadbacksMode() { return GpuReadbacksMode::Relaxed; }
     u32 GetVblankFrequency() { return 60; }
     u32 GetFrameLimit() { return 0; }
-    bool IsCopyGpuBuffers() { return false; }
     bool IsDirectMemoryAccessEnabled() { return false; }
     bool IsDumpShaders() { static const bool value = Flag("TSR_DUMP_SHADERS"); return value; }
     bool IsHdrAllowed() { return false; }

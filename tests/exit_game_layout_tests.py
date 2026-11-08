@@ -1,15 +1,24 @@
 #!/usr/bin/env python3
 """Exit Game on the real title files: assets/exit_game/title-labels.bin applied as the game applies it (every replaced
-byte checked first) to each language's GUI/title.mbs and GUI/title.ftx, from the 1.00 base archives and the 1.02
-update. Checks that the three-row parts draw exactly three rows at the menu's own pitch with Exit Game third, that the
-selected and confirmed states follow the third row, that nothing the two-row menu draws changes, that each language's
-data fits its own files only, and that a changed byte stops the patch. Every keyframe of the three-row parts is checked:
-text draws sample only the language's own rows or the new label, and the third row's write-on frames light only the
-label's letters under its plate.
+byte checked first) to each language's GUI/title.mbs and GUI/title.ftx, from the USA 1.00 base archives and the 1.02
+update, and when given, the Japanese base game and updates and the Asian game. Checks that the three-row parts draw
+exactly three rows at the menu's own pitch with Exit Game third, that the selected and confirmed states follow the third
+row, that nothing the two-row menu draws changes, that each language's data fits its own files only (and of an atlas
+with several layouts, each layout gets its own edits only), and that a changed byte stops the patch. Every keyframe of
+the three-row parts is checked: text draws sample only the language's own rows or the new label, and the third row's
+write-on frames light only the label's letters under its plate.
 
-    exit_game_layout_tests.py <1.00 folder> [<1.02 folder>]      exit code 2 when the folders lack the archives
+    exit_game_layout_tests.py <USA 1.00 folder> [<USA 1.02 folder>]
+                              [--japan <folder with ROBO.CPK>] [--japan-update <folder with ROBO_PATCH.CPK>]...
+                              [--asia <folder with ROBO_CN.CPK and ROBO_TW.CPK>]
+
+The regional folders may also come from TSR_EXIT_GAME_JAPAN, TSR_EXIT_GAME_JAPAN_UPDATES (folders separated by the path
+separator) and TSR_EXIT_GAME_ASIA; regions without their archives are skipped. Exit code 2 when the USA folder lacks
+the archives.
 """
+import argparse
 import io
+import os
 import struct
 import sys
 import zlib
@@ -27,6 +36,7 @@ from cpk import Cpk  # noqa: E402
 import title_layout as tl  # noqa: E402
 
 SUFFIX = {'english': 'US', 'french': 'FR', 'german': 'GE', 'italian': 'IT', 'spanish': 'SP'}
+KEYS = list(SUFFIX) + ['japanese', 'schinese', 'tchinese']
 THREE_ROW = ['NEW_GAME_P00', 'LOAD_GAME_P00', 'EXTRA_GAME_P00', 'NEW_GAME_P01', 'LOAD_GAME_P01', 'EXTRA_GAME_P01']
 checks = failures = 0
 
@@ -40,7 +50,7 @@ def check(ok, what):
 
 
 def parse_asset(data):
-    assert data[:8] == b'TSRXGL01' and zlib.crc32(data[:-4]) == struct.unpack_from('<I', data, len(data) - 4)[0]
+    assert data[:8] == b'TSRXGL02' and zlib.crc32(data[:-4]) == struct.unpack_from('<I', data, len(data) - 4)[0]
     pos, langs = 12, []
     for _ in range(struct.unpack_from('<I', data, 8)[0]):
         lang = dict(key=data[pos:pos + 12].rstrip(b'\0').decode())
@@ -61,35 +71,54 @@ def parse_asset(data):
             blocks = [pool[i] for i, n in runs for _ in range(n)]
             regions.append(dict(rect=(bx, by, bw, bh), crc=crc, blocks=blocks))
         lang['regions'] = regions
-        lang['sections'] = struct.unpack_from('<11I', data, pos)
-        lang['layout_size'] = struct.unpack_from('<I', data, pos + 44)[0]
-        pos += 48
-        edits, count = [], struct.unpack_from('<I', data, pos)[0]
+        lang['layouts'], count = [], struct.unpack_from('<I', data, pos)[0]
         pos += 4
         for _ in range(count):
-            sec, n, _, off = struct.unpack_from('<BBHI', data, pos)
-            edits.append((sec, off, data[pos + 8:pos + 8 + n], data[pos + 8 + n:pos + 8 + 2 * n]))
-            pos += 8 + 2 * n
-        lang['edits'] = edits
+            layout = dict(tag=data[pos:pos + 12].rstrip(b'\0').decode())
+            pos += 12
+            layout['sections'] = struct.unpack_from('<11I', data, pos)
+            layout['layout_size'] = struct.unpack_from('<I', data, pos + 44)[0]
+            pos += 48
+            edits, count = [], struct.unpack_from('<I', data, pos)[0]
+            pos += 4
+            for _ in range(count):
+                sec, n, _, off = struct.unpack_from('<BBHI', data, pos)
+                edits.append((sec, off, data[pos + 8:pos + 8 + n], data[pos + 8 + n:pos + 8 + 2 * n]))
+                pos += 8 + 2 * n
+            layout['edits'] = edits
+            lang['layouts'].append(layout)
         langs.append(lang)
     assert pos == len(data) - 4
     return langs
 
 
-def patch_layout(lang, data):
-    """As exit_game_layout_patch: 'other', 'mismatch', or the patched bytes."""
+def patch_layout(layout, data):
+    """One layout of a language as the game applies it: 'other', 'mismatch', or the patched bytes."""
     lay = tl.Layout(data)
-    if list(lay.offsets) != list(lang['sections']) or len(data) != lang['layout_size']:
+    if list(lay.offsets) != list(layout['sections']) or len(data) != layout['layout_size']:
         return 'other'
     out = bytearray(data)
-    for sec, off, old, new in lang['edits']:
-        o = lang['sections'][sec] + off
+    for sec, off, old, new in layout['edits']:
+        o = layout['sections'][sec] + off
         if out[o:o + len(old)] != old:
             return 'mismatch'
-    for sec, off, old, new in lang['edits']:
-        o = lang['sections'][sec] + off
+    for sec, off, old, new in layout['edits']:
+        o = layout['sections'][sec] + off
         out[o:o + len(new)] = new
     return bytes(out)
+
+
+def patch_language(lang, data):
+    """As exit_game_layout_patch: the first of the language's layouts that fits, else 'mismatch' or 'other'; and its
+    index."""
+    result = ('other', -1)
+    for i, layout in enumerate(lang['layouts']):
+        out = patch_layout(layout, data)
+        if isinstance(out, bytes):
+            return out, i
+        if out == 'mismatch' and result[0] == 'other':
+            result = (out, i)
+    return result
 
 
 def blocks(pixels, pitch, rect):
@@ -195,7 +224,7 @@ def visible(lay, s):
     return x1 > x0 and y1 > y0
 
 
-def check_animation(key, original, patched, lang, tex):
+def check_animation(key, original, patched, lang, layout, tex):
     """Every keyframe of the three-row parts: what each draw samples, and the third row's write-on frames."""
     a, b = tl.Layout(original), tl.Layout(patched)
     label_rects = [(r['rect'][0] * 4, r['rect'][1] * 4, (r['rect'][0] + r['rect'][2]) * 4, (r['rect'][1] + r['rect'][3]) * 4)
@@ -204,7 +233,7 @@ def check_animation(key, original, patched, lang, tex):
     used = [sampled_texels(a, a.sprite(i), tex) for i in range(a.count(tl.SPRITES))
             if a.sprite(i)['kind'] == tl.TEXTURED and a.sprite(i)['tex'] == 4]
     check(not any(overlaps(r, u) for r in label_rects for u in used), f'{key}: the label regions lie in atlas space no sprite samples')
-    check({sec for sec, *_ in lang['edits']} <= {tl.UVS, tl.POSITIONS, tl.SPRITES, tl.ELEMENTS, tl.KEYFRAMES, tl.LAYERS},
+    check({sec for sec, *_ in layout['edits']} <={tl.UVS, tl.POSITIONS, tl.SPRITES, tl.ELEMENTS, tl.KEYFRAMES, tl.LAYERS},
           f'{key}: transforms, colours and parts keep their original records')
     for ref, name in (('LOAD_GAME_P00', 'EXTRA_GAME_P00'), ('LOAD_GAME_P01', 'EXTRA_GAME_P01')):
         durations = lambda lay, n: [[struct.unpack_from('<H', lay.d, lay.at(tl.KEYFRAMES, k, 6))[0] for k in range(*(lambda s, c: (s, s + c))(
@@ -269,68 +298,121 @@ def check_animation(key, original, patched, lang, tex):
     check(lit_frames >= 10, f'{key}: the third row writes on over its frames ({lit_frames} lit)')
 
 
+def entry(cpk, name):
+    return cpk.read(next(e for e in cpk.entries if e['path'].lower() == name))
+
+
+def titles(args):
+    """{key: (title.ftx, [(title.mbs, what it is, the tag of the asset layout it must get)])} of every language whose
+    archives were given."""
+    out = {}
+    for key, suffix in SUFFIX.items():
+        cpk = Cpk(args.usa / f'ROBO_{suffix}.CPK')
+        mbs = [(entry(cpk, 'gui/title.mbs'), 'USA 1.00/1.01', '')]
+        if args.usa_update and (args.usa_update / f'ROBO_PATCH2_{suffix}.CPK').exists():
+            mbs.append((entry(Cpk(args.usa_update / f'ROBO_PATCH2_{suffix}.CPK'), 'gui/title.mbs'), 'USA 1.02', ''))
+        out[key] = (entry(cpk, 'gui/title.ftx'), mbs)
+    if args.japan and (args.japan / 'ROBO.CPK').exists():
+        cpk = Cpk(args.japan / 'ROBO.CPK')
+        mbs = [(entry(cpk, 'gui/title.mbs'), 'Japanese base game', 'base')]
+        for u in args.japan_update:
+            if (u / 'ROBO_PATCH.CPK').exists():
+                mbs.append((entry(Cpk(u / 'ROBO_PATCH.CPK'), 'gui/title.mbs'), f'Japanese update {len(mbs)}', 'update'))
+            else:
+                print(f'exit game japanese: no ROBO_PATCH.CPK in {u}, that update skipped')
+        out['japanese'] = (entry(cpk, 'gui/title.ftx'), mbs)
+    else:
+        print('exit game japanese: skipped (no Japanese ROBO.CPK given)')
+    for key, suffix in (('schinese', 'CN'), ('tchinese', 'TW')):
+        if args.asia and (args.asia / f'ROBO_{suffix}.CPK').exists():
+            cpk = Cpk(args.asia / f'ROBO_{suffix}.CPK')
+            out[key] = (entry(cpk, 'gui/title.ftx'), [(entry(cpk, 'gui/title.mbs'), f'Asian ROBO_{suffix}', '')])
+        else:
+            print(f'exit game {key}: skipped (no ROBO_{suffix}.CPK given)')
+    return out
+
+
+def check_language(lang, ftx, mbs, asset):
+    key = lang['key']
+    tex = next(t for t in ftex.textures(ftx) if t['name'] == '4K_title_arranged043.gnf')
+    pixels = ftx[tex['data']:tex['data'] + tex['size']]
+    patched_tex = patch_texture(lang, tex, pixels)
+    check(isinstance(patched_tex, bytes), f'{key}: the label art fits the {key} text atlas')
+    if isinstance(patched_tex, bytes):
+        check(patch_texture(lang, tex, patched_tex) == 'mismatch', f'{key}: a patched atlas is not patched twice')
+        touched = set()
+        for r in lang['regions']:
+            bx, by, bw, bh = r['rect']
+            touched |= {ftex.tiled_offset(x, y, tex['pitch'] // 4) for y in range(by, by + bh) for x in range(bx, bx + bw)}
+        changed = {o for o in range(0, len(pixels), 16) if pixels[o:o + 16] != patched_tex[o:o + 16]}
+        check(changed <= touched, f'{key}: only the label blocks change in the atlas')
+        damaged = bytearray(pixels)
+        r0 = lang['regions'][0]['rect']
+        o = ftex.tiled_offset(r0[0] + 1, r0[1] + 1, tex['pitch'] // 4)
+        damaged[o] ^= 1
+        check(patch_texture(lang, tex, bytes(damaged)) == 'mismatch', f'{key}: changed atlas blocks stop the patch')
+    rects = []
+    for r in lang['regions']:
+        bx, by = r['rect'][:2]
+        rects.append((bx * 4 / tex['width'], by * 4 / tex['height']))
+    tags = [layout['tag'] for layout in lang['layouts']]
+    pitch, own = None, {}
+    for m, what, tag in mbs:
+        out, which = patch_language(lang, m)
+        check(isinstance(out, bytes), f'{key}: the layout edits fit the {what} title layout')
+        if not isinstance(out, bytes):
+            continue
+        check(tag in tags and which == tags.index(tag), f'{key}: the {what} title layout gets the "{tag}" layout edits')
+        layout = lang['layouts'][which]
+        for i, other in enumerate(lang['layouts']):
+            if i != which:
+                check(not isinstance(patch_layout(other, m), bytes), f'{key}: the "{other["tag"]}" edits do not fit the {what} layout')
+        pitch = check_layout(key, m, out, rects)
+        check_animation(key, m, out, lang, layout, tex)
+        check(out[:0x100] == m[:0x100], f'{key}: the layout header is unchanged')
+        check(patch_language(lang, out)[0] == 'mismatch', f'{key}: a patched layout is not patched twice')
+        damaged = bytearray(m)
+        sec, off, old, _ = layout['edits'][len(layout['edits']) // 2]
+        damaged[layout['sections'][sec] + off] ^= 1
+        check(patch_language(lang, bytes(damaged))[0] == 'mismatch', f'{key}: a changed layout record stops the patch')
+        own[what] = out
+    for other in asset:
+        if other is lang:
+            continue
+        check(patch_texture(other, tex, pixels) == 'other', f'{other["key"]} data does not fit the {key} atlas')
+        for m, what, _ in mbs:
+            out = patch_language(other, m)[0]
+            if key in SUFFIX and other['key'] in SUFFIX:
+                check(out == 'other', f'{other["key"]} data does not fit the {key} layout')
+            else:  # layouts with the same sections: another language's edits may fit only to the same effect
+                check(not isinstance(out, bytes) or out == own.get(what), f'{other["key"]} data does not change the {what} layout')
+    edits = ', '.join(f'{len(layout["edits"])}' + (f' ({layout["tag"]})' if layout['tag'] else '') for layout in lang['layouts'])
+    print(f'exit game {key}: three rows at a {pitch or 0:.0f}-unit pitch on {len(own)} of {len(mbs)} layouts ({", ".join(own)}), '
+          f'{edits} layout records, {sum(len(r["blocks"]) for r in lang["regions"])} atlas blocks')
+
+
 def main():
-    if len(sys.argv) < 2:
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument('usa', nargs='?', type=Path)
+    ap.add_argument('usa_update', nargs='?', type=Path)
+    ap.add_argument('--japan', type=Path, default=os.environ.get('TSR_EXIT_GAME_JAPAN') or None)
+    ap.add_argument('--japan-update', type=Path, action='append')
+    ap.add_argument('--asia', type=Path, default=os.environ.get('TSR_EXIT_GAME_ASIA') or None)
+    args = ap.parse_args()
+    if args.japan_update is None:
+        args.japan_update = [Path(p) for p in os.environ.get('TSR_EXIT_GAME_JAPAN_UPDATES', '').split(os.pathsep) if p]
+    if not args.usa:
         print(__doc__)
         return 2
-    base = Path(sys.argv[1])
-    update = Path(sys.argv[2]) if len(sys.argv) > 2 else None
-    if not (base / 'ROBO_US.CPK').exists():
-        print(f'no ROBO_US.CPK in {base}')
+    if not (args.usa / 'ROBO_US.CPK').exists():
+        print(f'no ROBO_US.CPK in {args.usa}')
         return 2
     asset = parse_asset((ROOT / 'assets' / 'exit_game' / 'title-labels.bin').read_bytes())
-    check([l['key'] for l in asset] == list(SUFFIX), 'the five text languages, in order')
-    files = {}
+    check([l['key'] for l in asset] == KEYS, 'the text languages, in order')
+    files = titles(args)
     for lang in asset:
-        cpk = Cpk(base / f'ROBO_{SUFFIX[lang["key"]]}.CPK')
-        get = lambda c, n: c.read(next(e for e in c.entries if e['path'].lower() == n))
-        mbs = [get(cpk, 'gui/title.mbs')]
-        if update and (update / f'ROBO_PATCH2_{SUFFIX[lang["key"]]}.CPK').exists():
-            mbs.append(get(Cpk(update / f'ROBO_PATCH2_{SUFFIX[lang["key"]]}.CPK'), 'gui/title.mbs'))
-        files[lang['key']] = (mbs, get(cpk, 'gui/title.ftx'))
-    for lang in asset:
-        key = lang['key']
-        mbs, ftx = files[key]
-        tex = next(t for t in ftex.textures(ftx) if t['name'] == '4K_title_arranged043.gnf')
-        pixels = ftx[tex['data']:tex['data'] + tex['size']]
-        patched_tex = patch_texture(lang, tex, pixels)
-        check(isinstance(patched_tex, bytes), f'{key}: the label art fits the {key} text atlas')
-        if isinstance(patched_tex, bytes):
-            check(patch_texture(lang, tex, patched_tex) == 'mismatch', f'{key}: a patched atlas is not patched twice')
-            touched = set()
-            for r in lang['regions']:
-                bx, by, bw, bh = r['rect']
-                touched |= {ftex.tiled_offset(x, y, tex['pitch'] // 4) for y in range(by, by + bh) for x in range(bx, bx + bw)}
-            changed = {o for o in range(0, len(pixels), 16) if pixels[o:o + 16] != patched_tex[o:o + 16]}
-            check(changed <= touched, f'{key}: only the label blocks change in the atlas')
-            damaged = bytearray(pixels)
-            r0 = lang['regions'][0]['rect']
-            o = ftex.tiled_offset(r0[0] + 1, r0[1] + 1, tex['pitch'] // 4)
-            damaged[o] ^= 1
-            check(patch_texture(lang, tex, bytes(damaged)) == 'mismatch', f'{key}: changed atlas blocks stop the patch')
-        rects = []
-        for r in lang['regions']:
-            bx, by = r['rect'][:2]
-            rects.append((bx * 4 / tex['width'], by * 4 / tex['height']))
-        for m in mbs:
-            out = patch_layout(lang, m)
-            check(isinstance(out, bytes), f'{key}: the layout edits fit the {key} title layout ({"1.02" if m[0x12] == 8 else "1.00/1.01"})')
-            if isinstance(out, bytes):
-                pitch = check_layout(key, m, out, rects)
-                check_animation(key, m, out, lang, tex)
-                check(out[:0x100] == m[:0x100], f'{key}: the layout header is unchanged')
-                check(patch_layout(lang, out) == 'mismatch', f'{key}: a patched layout is not patched twice')
-                damaged = bytearray(m)
-                sec, off, old, _ = lang['edits'][len(lang['edits']) // 2]
-                damaged[lang['sections'][sec] + off] ^= 1
-                check(patch_layout(lang, bytes(damaged)) == 'mismatch', f'{key}: a changed layout record stops the patch')
-        for other in asset:
-            if other is lang:
-                continue
-            check(patch_layout(other, mbs[0]) == 'other', f'{other["key"]} data does not fit the {key} layout')
-            check(patch_texture(other, tex, pixels) == 'other', f'{other["key"]} data does not fit the {key} atlas')
-        print(f'exit game {key}: three rows at a {pitch:.0f}-unit pitch, {len(lang["edits"])} layout records, '
-              f'{sum(len(r["blocks"]) for r in lang["regions"])} atlas blocks')
+        if lang['key'] in files:
+            check_language(lang, *files[lang['key']], asset)
     print(f'exit game layout: {checks} checks, {failures} failed')
     return 1 if failures else 0
 

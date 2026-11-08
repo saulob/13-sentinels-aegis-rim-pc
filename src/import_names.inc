@@ -389,6 +389,7 @@
 {"W0Hpm2X0uPE#libkernel","scePthreadSetprio"},
 {"W1Etj-jlW7Y#libSceGnmDriver","sceGnmInsertPushMarker"},
 {"W6SiVSiCDtI#libSceLibcInternal","sceLibcMspaceDestroy"},
+{"WAzWTZm1H+I#libSceSaveData","sceSaveDataTransferringMount"},
 {"WKAXJ4XBPQ4#libkernel","scePthreadCondWait"},
 {"WWiGuh9XfgQ#libSceErrorDialog","sceErrorDialogUpdateStatus"},
 {"WhCc1w3EhSI#libkernel","_sceKernelSetThreadAtexitReport"},

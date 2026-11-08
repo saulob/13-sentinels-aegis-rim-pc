@@ -7,6 +7,7 @@ extern "C" {
 #endif
 typedef struct {
     const char *title;          /* window title */
+    const char *build;          /* the running build, "CUSA10602 1.00": shown after the title */
     const char *serial;         /* CUSA id, names the pipeline cache */
     const char *user_dir;       /* user folder: the pipeline cache lives in its cache folder */
     const char *settings_file;  /* tsr.ini */
@@ -15,6 +16,8 @@ typedef struct {
     int32_t width, height;      /* initial window size */
     uint32_t features;          /* TSR_GPU_FEATURE_*: what the game build supports (the Options menu shows only those) */
 } TsrGpuConfig;
+/* The game window's title in every region, never the localized param.sfo TITLE. */
+#define TSR_WINDOW_TITLE "13 Sentinels: Aegis Rim"
 #define TSR_GPU_FEATURE_RENDER_RESOLUTION (1u << 0)
 /* 1 when a video core is linked in, 0 for the stub. */
 int tsrgpu_available(void);

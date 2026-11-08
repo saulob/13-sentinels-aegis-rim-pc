@@ -41,10 +41,11 @@ def main():
         print(f'    sha256 {module["sha256"]}')
         if profile and name == profile['entry']:
             version = game_profiles.version_of(game)
-            known = profile['versions'].get(version or '', {}).get('eboot_sha256')
+            build = profile['versions'].get(version or '')
+            matches = bool(build) and game_profiles.accepts_eboot(build, module['sha256'])
             print(f'    profile: version {version or "unknown"}, entry hash '
-                  f'{"matches" if known == module["sha256"] else "DOES NOT match"} the profile')
-            if known != module['sha256']:
+                  f'{"matches" if matches else "DOES NOT match"} the profile')
+            if not matches:
                 status = 1
     if profile:
         missing = [m for m in profile['modules'] if not (game / 'sce_module' / m).is_file()]

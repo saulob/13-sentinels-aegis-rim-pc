@@ -47,10 +47,20 @@ struct GameBuild {
     std::span<const PackageLayer> layers; // base package first; the last layer is the finished game
     std::span<const TsrResolutionSite> resolution_sites; // empty: renders only at its native size
     std::span<const TextLanguage> text_languages;        // the first is the default
-    const char* support_note;     // shown on the Play page; empty once the build has been confirmed to run
     std::span<const char* const> prompt_archives; // the archives the Xbox icons patch covers (controller_prompts.h)
     bool english_voices;           // ships the English voice bank and the game's Audio Language option
+    const char* prompt_patch = ""; // the embedded Xbox icons patch: launcher/prompts/xbox-prompts-<prompt_patch>.dcpx
+    const char* voice_archive = "";         // holds the Japanese cast (Sound/voice)
+    const char* english_voice_archive = ""; // holds the English cast (Sound/voice2) when english_voices
+    // The build key whose executable code this build runs, byte for byte apart from data no feature reads; the
+    // feature site tables are keyed by it. Empty: the build's own key.
+    const char* code_build = "";
+    // Other packagings of the same finished game whose eboot.bin differs only in its SDK version fields.
+    std::span<const char* const> alternate_eboots = {};
 };
+
+// The executable is one of the build's: its own eboot.bin or an alternate packaging of it.
+bool IsBuildExecutable(const GameBuild& build, std::string_view sha256);
 
 // The supported builds: the base first, then its updates.
 std::span<const GameBuild> SupportedBuilds();
@@ -80,7 +90,11 @@ std::span<const TextLanguage> TextLanguagesOf(const GameBuild* build);
 // The language of a saved key among `languages` (not empty); the first when the key is not one of them.
 const TextLanguage& ResolveTextLanguage(std::span<const TextLanguage> languages, std::string_view key);
 
+// The supported builds per title and region, for the Play page and messages: "CUSA19610 USA 1.00, 1.01, 1.02; ...".
 std::string SupportedBuildsText();
+
+// "CUSA19610-1.02": the key of the build whose executable code the build runs (its own unless code_build says).
+std::string CodeBuildKey(const GameBuild& build);
 
 // Files every complete game folder has, whatever the build. The build's archives are required too.
 inline constexpr const char* kSharedGameFiles[] = {

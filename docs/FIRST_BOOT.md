@@ -19,6 +19,23 @@ The update replaces `eboot.bin`, the three bundled modules and `sce_sys`, and ad
 `ROBO_PATCH_US.CPK` and `ROBO_PATCH2%s.CPK` as well as `ROBO%s.CPK`, so it never runs against a 1.00 tree. The profile
 requires those archives for 1.02.
 
+## Other regions
+
+| Build | CATEGORY | APP_VER / VERSION | SDK | eboot.bin | Archives |
+|---|---|---|---|---|---|
+| CUSA19620 1.00 Europe | `gd` | 01.00 / 01.01 | 7.00 | 15,083,161 bytes, `e4df1d07…90e1` | as USA 1.00 |
+| CUSA19620 1.01 Europe | `gp` | 01.01 / 01.00 | 7.00 (one packaging 5.05) | 15,096,185 bytes, `dafcc5f0…0533` / `123730cd…6b28` | `ROBO_PATCH_US.CPK` |
+| CUSA10602 1.00 Japan | `gd` | 01.00 / 01.00 | 6.50 | 14,809,061 bytes, `6d6f67ce…5d0c` | `ROBO.CPK` |
+| CUSA10602 1.03 Japan | `gp` | 01.03 / 01.00 | 7.50 | 15,394,613 bytes, `fdd1b5ad…c11a` | `ROBO_PATCH.CPK`, `ROBO_PATCH2.CPK` |
+| CUSA10602 1.04 Japan | `gp` (delta info) | 01.04 / 01.00 | 9.50 | 14,089,055 bytes, `3bcaeac5…fbcb` | `ROBO_PATCH.CPK` (holds all of 1.03) |
+| CUSA18093 1.00 Asia | `gd` | 01.00 / 01.01 | 5.05 | 16,000,069 bytes, `dd6d54e9…2bcf` | `ROBO_CN.CPK`, `ROBO_TW.CPK` |
+
+The European executables are the American ones: the 1.00 image differs only in a build date string, 1.01 is the same
+file, and its older-firmware packaging differs only in the SDK version fields. The Japanese and Asian executables are
+builds of their own; every feature site (render size, Skip Intro, Exit Game, LZCNT) was located in each of them by
+structure and checked against the real code. Their imports all bind; the Japanese 1.03/1.04 and Asian games also call
+`sceSaveDataTransferringMount` (the prologue demo's save), which the runtime answers.
+
 ## Executable
 
 Both eboots are plaintext PS4 SELF, x86-64 ELF type `0xfe10` with the usual layout: code at 0, SCE_RELRO at `0xc00000`,
@@ -58,7 +75,7 @@ services (NpTus, Matching2, Score, WebApi). An unbound import stops the game onl
 Every Dragon's Crown game-specific patch, hook, offset and fingerprint (resolution sites, ultrawide, skip intro and
 offers, gallery, menu buttons, NPC voices, exit-game row, title layout, LZCNT rewrite sites), the DC water and ultrawide
 renderer workarounds, the controller prompt and translation patches, online play, cheats and Discord presence. The
-self-updater is carried over for this repository's releases (docs\RELEASE_SECURITY.md). The LZCNT rewrite itself is carried over with sites of its own for 1.00, 1.01 and 1.02, used on a
+self-updater is carried over for this repository's releases (docs\RELEASE_SECURITY.md). The LZCNT rewrite itself is carried over with sites of its own for every supported executable, used on a
 processor without LZCNT (Intel Sandy Bridge, Ivy Bridge); `TSR_EMULATE_LZCNT=1` forces it on one that has LZCNT.
 
 ## Unknown until the first boot

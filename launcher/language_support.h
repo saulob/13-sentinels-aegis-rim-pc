@@ -1,7 +1,7 @@
-// What each installed build can show and speak. Text: the base archives hold all five languages (ROBO_US and
-// ROBO_FR/GE/IT/SP.CPK). Voices: the Japanese cast (Sound/voice) is in ROBO_US.CPK of the base game, the English cast
-// (Sound/voice2) only in ROBO_PATCH_US.CPK of the 1.01 and 1.02 updates, where the game's own Audio Language option
-// picks between them; the launcher only reports it.
+// What each installed build can show and speak. Text: the build's language archives (game_profile.h). Voices: the
+// Japanese cast (Sound/voice) is in every build, the English cast (Sound/voice2) only in the updates that ship it
+// (USA and Europe 1.01 and 1.02, Japan 1.04), where the game's own Audio Language option picks between them; the
+// launcher only reports it.
 #pragma once
 
 #include <filesystem>
@@ -19,8 +19,13 @@ struct VoiceBank {
     const char* stream; // .awb
 };
 
+// The American and European archives.
 inline constexpr VoiceBank kJapaneseVoices = {"ROBO_US.CPK", "Sound/voice.acb", "Sound/voice.awb"};
 inline constexpr VoiceBank kEnglishVoices = {"ROBO_PATCH_US.CPK", "Sound/voice2.acb", "Sound/voice2.awb"};
+
+// The build's banks: the same files in the archives the build's profile names.
+VoiceBank JapaneseVoicesOf(const GameBuild& build);
+VoiceBank EnglishVoicesOf(const GameBuild& build);
 
 // Both files of the bank are in the archive's table of contents (the archive is not read further).
 bool VoiceBankPresent(const std::filesystem::path& app0, const VoiceBank& bank);

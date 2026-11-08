@@ -51,6 +51,8 @@ typedef struct { int32_t user; int32_t pad; const DirName *dir; uint64_t blocks;
 typedef struct { MountPoint point; uint64_t required_blocks; uint32_t unused, status; uint8_t reserved[28]; int32_t pad; } MountResult;
 typedef struct { int32_t user; int32_t pad; const TitleId *title; const DirName *dir; uint32_t unused;
                  uint8_t reserved[32]; int32_t pad2; } Delete;
+typedef struct { int32_t user; int32_t pad; const TitleId *title; const DirName *dir; const void *fingerprint;
+                 uint8_t reserved[32]; } TransferringMount;
 typedef struct { int32_t user; int32_t pad; const TitleId *title; const DirName *dir; uint32_t key, order;
                  uint8_t reserved[32]; } SearchCond;
 typedef struct { uint64_t blocks, free_blocks; uint8_t reserved[32]; } SearchInfo;
@@ -190,6 +192,19 @@ static int slot_of(const MountPoint *point) {
     if (!point || strncmp(point->data,"/savedata",9)) return -1;
     int slot=atoi(point->data+9);
     return slot>=0 && slot<SLOTS && slots[slot].used ? slot : -1;
+}
+/* Another title's save, read-only: the Japanese and Asian games offer to carry over their prologue demo's (param.sfo
+ * SAVE_DATA_TRANSFER_TITLE_ID_LIST). Without such a save in the user folder it is not found, as on a console. */
+static ABI int32_t save_transferring_mount(const TransferringMount *m, MountResult *result) {
+    if (!m || !m->title) return traced("sceSaveDataTransferringMount","null",ERR_PARAMETER);
+    char title[sizeof(m->title->data)+1];
+    memcpy(title,m->title->data,sizeof(m->title->data));
+    title[sizeof(m->title->data)]=0;
+    if (!valid_name(title,sizeof(title))) return traced("sceSaveDataTransferringMount","bad title",ERR_PARAMETER);
+    const int32_t status=mount(m->user,title,m->dir,0,MODE_RDONLY,result);
+    const int slot=status ? -1 : slot_of(&result->point);
+    if (slot>=0) runtime_file_mount_read_only(result->point.data,slots[slot].host);
+    return traced("sceSaveDataTransferringMount",m->dir ? m->dir->data : "null",status);
 }
 static int32_t umount(const MountPoint *point) {
     if (!initialized) return ERR_NOT_INITIALIZED;
@@ -392,6 +407,7 @@ static const RuntimeExport exports[]={
     {"sceSaveDataInitialize",save_initialize}, {"sceSaveDataInitialize2",save_initialize},
     {"sceSaveDataInitialize3",save_initialize}, {"sceSaveDataTerminate",save_terminate},
     {"sceSaveDataMount",save_mount}, {"sceSaveDataMount2",save_mount2}, {"sceSaveDataUmount",save_umount}, {"sceSaveDataGetMountInfo",save_get_mount_info},
+    {"sceSaveDataTransferringMount",save_transferring_mount},
     {"sceSaveDataSetParam",save_set_param}, {"sceSaveDataSaveIcon",save_icon}, {"sceSaveDataDelete",save_delete},
     {"sceSaveDataDirNameSearch",save_search},
     {"sceSaveDataSetupSaveDataMemory",memory_setup}, {"sceSaveDataGetSaveDataMemory",memory_get},

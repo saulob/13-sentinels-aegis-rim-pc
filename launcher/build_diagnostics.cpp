@@ -25,8 +25,6 @@ constexpr size_t kMaxSourceFiles = 5000;
 constexpr size_t kMaxListedFiles = 60;
 
 // The other releases of the game, so that a package of one is told apart from an unrelated game.
-constexpr std::string_view kOtherReleases[] = {"CUSA10602", "CUSA18093", "CUSA19620"};
-
 class FolderSource final : public GameSource {
 public:
     explicit FolderSource(fs::path root) : root_(std::move(root)) {}
@@ -163,8 +161,7 @@ std::string Shown(const std::string& value) {
 
 bool KnownTitleId(const std::string& title_id) {
     const auto supported = SupportedBuilds();
-    return std::any_of(supported.begin(), supported.end(), [&](const GameBuild& build) { return title_id == build.title_id; }) ||
-           std::find(std::begin(kOtherReleases), std::end(kOtherReleases), title_id) != std::end(kOtherReleases);
+    return std::any_of(supported.begin(), supported.end(), [&](const GameBuild& build) { return title_id == build.title_id; });
 }
 
 bool NamesGame(const std::string& sfo) {
@@ -194,13 +191,18 @@ void DescribeIdentity(Lines& out, const std::string& sfo, const GameSource& sour
     out.Add("  identity check: %s", identity.detail.empty() ? "matches a supported build" : identity.detail.c_str());
 }
 
-const GameBuild* BuildOfExecutable(const std::string& sha) {
+// Several titles can share an executable (EUR runs the American code), so the one param.sfo names comes first.
+const GameBuild* BuildOfExecutable(const std::string& sha, const std::string& title) {
+    const GameBuild* found = nullptr;
     for (const GameBuild& build : SupportedBuilds()) {
-        if (sha == build.eboot_sha256) {
-            return &build;
+        if (IsBuildExecutable(build, sha) && (!found || title == build.title_id)) {
+            found = &build;
+            if (title == build.title_id) {
+                break;
+            }
         }
     }
-    return nullptr;
+    return found;
 }
 
 void DescribeExecutables(Lines& out, const GameSource& source, const std::string& sfo) {
@@ -208,7 +210,7 @@ void DescribeExecutables(Lines& out, const GameSource& source, const std::string
     if (source.Read("eboot.bin", kMaxExecutable, bytes)) {
         const std::string sha = Sha256Of(bytes);
         out.Add("eboot.bin: %zu bytes, SHA-256 %s", bytes.size(), Shown(sha).c_str());
-        const GameBuild* executable = BuildOfExecutable(sha);
+        const GameBuild* executable = BuildOfExecutable(sha, SfoString(sfo, "TITLE_ID"));
         const GameBuild* named = CheckSfoIdentity(sfo).build;
         if (!executable) {
             out.Add("  eboot.bin matches no supported executable (%s)", SupportedBuildsText().c_str());
@@ -252,7 +254,7 @@ std::unique_ptr<GameSource> OpenPackageSource(Package& package) {
 
 bool ExecutableDiffers(const GameSource& source, const GameBuild& build) {
     Bytes eboot;
-    return source.Read("eboot.bin", kMaxExecutable, eboot) && Sha256Of(eboot) != build.eboot_sha256;
+    return source.Read("eboot.bin", kMaxExecutable, eboot) && !IsBuildExecutable(build, Sha256Of(eboot));
 }
 
 UnsupportedReport DiagnoseUnsupportedBuild(const GameSource& source, const std::string& sfo) {

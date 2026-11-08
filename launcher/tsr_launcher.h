@@ -108,6 +108,8 @@ typedef struct {
     size_t resolution_site_count;
     const char *title_id;
     const char *version;         /* the build's profile version: with title_id, the build key */
+    const char *code_key;        /* the build key whose executable code it runs; empty: its own */
+    const char *region;
 } TsrGameBuild;
 
 /* The supported game build a boot image folder was built from (its image.json); 0 when it is not one. */

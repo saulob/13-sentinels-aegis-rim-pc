@@ -8,6 +8,7 @@
 #include <windows.h>
 #endif
 
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -90,7 +91,7 @@ const GameBuild& Build(const char* version) {
 
 void TestProfile() {
     const auto builds = SupportedBuilds();
-    CHECK(builds.size() == 3);
+    CHECK(builds.size() == 9); // USA 1.00-1.02, Europe 1.00-1.01, Japan 1.00/1.03/1.04, Asia 1.00 (build_parity_tests)
     const GameBuild& base = Build("1.00");
     CHECK(&builds[0] == &base);
     CHECK(!IsUpdateBuild(base));
@@ -183,7 +184,16 @@ void TestMessages() {
     CHECK(RefusedPackageKind(InstallStatus::kExpectedUpdatePackage));
     CHECK(!RefusedPackageKind(InstallStatus::kInstalled));
     CHECK(DescribeInstall(InstallStatus::kExpectedBasePackage).title != DescribeInstall(InstallStatus::kExpectedUpdatePackage).title);
-    CHECK(DescribeInstall(InstallStatus::kUpdateNeedsBase).text.find("CUSA19610") != std::string::npos);
+    CHECK(DescribeInstall(InstallStatus::kUpdateNeedsBase).text.find("same title ID") != std::string::npos);
+    CHECK(!RefusedPackageKind(InstallStatus::kUpdateForOtherTitle));
+    InstallResult foreign;
+    foreign.status = InstallStatus::kUpdateForOtherTitle;
+    foreign.update_title_id = "CUSA19620";
+    foreign.installed_title_id = "CUSA10602";
+    const InstallMessage message = DescribeInstall(foreign);
+    CHECK(message.title == "This update is for CUSA19620, but the installed game is CUSA10602");
+    CHECK(message.text == "Install the matching game version before applying this update.");
+    CHECK(DescribeInstall(InstallResult{}).title == DescribeInstall(InstallStatus::kInstalled).title);
 }
 
 // scripts/game_profiles.py names the same builds and executables.
@@ -192,6 +202,10 @@ void TestScriptsAgree() {
     CHECK(!script.empty());
     for (const GameBuild& build : SupportedBuilds()) {
         CHECK(script.find(build.eboot_sha256) != std::string::npos);
+        for (const char* alternate : build.alternate_eboots) {
+            CHECK(script.find(alternate) != std::string::npos);
+        }
+        CHECK(script.find(std::string("'region': '") + build.region + "'") != std::string::npos);
         CHECK(script.find(build.content_id) != std::string::npos);
         CHECK(script.find(std::string("'") + build.folder + "'") != std::string::npos);
         for (const char* file : build.extra_files) {
@@ -576,6 +590,27 @@ void TestRealInstall() {
     CHECK(!EnglishVoicesAvailable(base_app0, &base));
     const FileSnapshot base_before = Snapshot(base_app0);
 
+    // The other regions' real update packages are refused by Install update while USA is the installed game.
+    size_t foreign_updates = 0;
+    for (const fs::directory_entry& entry : fs::directory_iterator(folder, ec)) {
+        Package package;
+        if (entry.path().extension() != ".pkg" || !package.Open(entry.path()).ok()) {
+            continue;
+        }
+        const GameCheck identity = CheckPackageIdentity(package.sfo());
+        if (identity.state != GameFileState::kValid || identity.layer == 0 || identity.build->title_id == base.title_id) {
+            continue;
+        }
+        const InstallResult refused = Install(entry.path(), roots, PackageKind::kUpdate);
+        CHECK(refused.status == InstallStatus::kUpdateForOtherTitle);
+        CHECK(refused.installed_title_id == base.title_id && refused.update_title_id == identity.build->title_id);
+        CHECK(!fs::exists(BuildPaths(roots, *identity.build).app0));
+        ++foreign_updates;
+    }
+    std::printf("real foreign updates refused while USA is installed: %zu\n", foreign_updates);
+    CHECK(Snapshot(base_app0) == base_before);
+    CHECK(LastPreparedBuild(roots) == &base);
+
     InstallHooks interrupted;
     interrupted.expected = PackageKind::kUpdate;
     interrupted.progress = [](uint64_t done, uint64_t) { return done < (64u << 20); };
@@ -645,6 +680,272 @@ void TestRealInstall() {
         std::printf("real install: base, interrupted update, 1.02 over base, 1.01 beside it (no downgrade), removals "
                     "fall back by precedence, reinstall; base files and user files untouched\n");
     }
+    fs::remove_all(root, ec);
+}
+
+// Remove Update: every update of one title goes, the base, the other titles and the user's files stay.
+void TestRemoveAllUpdates(const fs::path& scratch) {
+    const fs::path root = scratch / "remove-all";
+    const GameRoots roots{root / "prepared", root / "image"};
+    const auto install = [&](const GameBuild& build) {
+        const GamePaths paths = BuildPaths(roots, build);
+        const PackageLayer& layer = build.layers.back();
+        Write(paths.app0 / "sce_sys" / "param.sfo",
+              PackageSfo(build.title_id, build.content_id, layer.update ? "gp" : "gd", layer.app_ver, layer.sfo_version));
+        Write(paths.app0 / kPreparedMarker, "{\"scope\": \"full\"}");
+        Write(paths.image_dir / "boot.bin", "image");
+        Write(paths.app0 / "marker.txt", build.label);
+    };
+    const auto installed = [&](const GameBuild& build) { return fs::exists(BuildPaths(roots, build).app0 / "marker.txt"); };
+    Write(root / "user" / "savedata" / "ROBO13.DAT", "save");
+
+    const auto find = [](const char* key) -> const GameBuild& {
+        for (const GameBuild& build : SupportedBuilds()) {
+            if (std::string_view(build.folder) == key) return build;
+        }
+        std::abort();
+    };
+    const GameBuild& usa_base = find("CUSA19610-1.00");
+    const GameBuild& usa_101 = find("CUSA19610-1.01");
+    const GameBuild& usa_102 = find("CUSA19610-1.02");
+    const GameBuild& eu_base = find("CUSA19620-1.00");
+    const GameBuild& eu_101 = find("CUSA19620-1.01");
+    const GameBuild& jp_base = find("CUSA10602-1.00");
+    const GameBuild& jp_103 = find("CUSA10602-1.03");
+    const GameBuild& jp_104 = find("CUSA10602-1.04");
+    const GameBuild& asia = find("CUSA18093-1.00");
+
+    CHECK(InstalledUpdatesOf(roots, "CUSA10602").empty());
+    for (const GameBuild* build : {&usa_base, &eu_base, &jp_base, &asia}) install(*build);
+    for (const char* title : {"CUSA19610", "CUSA19620", "CUSA10602", "CUSA18093"}) CHECK(InstalledUpdatesOf(roots, title).empty());
+    CHECK(RemoveInstalledUpdatesOf(roots, "CUSA10602").removed == 0);
+    CHECK(installed(jp_base));
+
+    install(jp_103);
+    CHECK(InstalledUpdatesOf(roots, "CUSA10602").size() == 1);
+    for (const GameBuild* build : {&usa_101, &usa_102, &eu_101, &jp_104}) install(*build);
+    CHECK(InstalledUpdatesOf(roots, "CUSA10602").size() == 2);
+    CHECK(InstalledUpdatesOf(roots, "CUSA19610").size() == 2);
+    CHECK(InstalledUpdatesOf(roots, "CUSA19620").size() == 1);
+    CHECK(InstalledUpdatesOf(roots, "CUSA18093").empty());
+
+    const RemoveAllResult japan = RemoveInstalledUpdatesOf(roots, "CUSA10602");
+    CHECK(japan.ok() && japan.removed == 2 && japan.base_selected);
+    CHECK(installed(jp_base) && !installed(jp_103) && !installed(jp_104));
+    CHECK(!fs::exists(BuildPaths(roots, jp_104).image_dir));
+    CHECK(installed(usa_base) && installed(usa_101) && installed(usa_102) && installed(eu_base) && installed(eu_101) &&
+          installed(asia));
+    CHECK(InstalledUpdatesOf(roots, "CUSA10602").empty());
+    CHECK(Read(root / "user" / "savedata" / "ROBO13.DAT") == "save");
+
+    const RemoveAllResult europe = RemoveInstalledUpdatesOf(roots, "CUSA19620");
+    CHECK(europe.ok() && europe.removed == 1);
+    CHECK(installed(eu_base) && !installed(eu_101) && installed(usa_101) && installed(usa_102));
+
+    const RemoveAllResult usa = RemoveInstalledUpdatesOf(roots, "CUSA19610");
+    CHECK(usa.ok() && usa.removed == 2);
+    CHECK(installed(usa_base) && !installed(usa_101) && !installed(usa_102) && installed(asia));
+    CHECK(PreparedBuilds(roots).size() == 4);
+
+#ifdef _WIN32
+    install(jp_103);
+    install(jp_104);
+    const fs::path busy = BuildPaths(roots, jp_104).app0 / "eboot.bin";
+    Write(busy, "busy");
+    HANDLE handle = CreateFileW(busy.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, 0, nullptr);
+    CHECK(handle != INVALID_HANDLE_VALUE);
+    const RemoveAllResult partial = RemoveInstalledUpdatesOf(roots, "CUSA10602");
+    CloseHandle(handle);
+    CHECK(!partial.ok() && partial.failed == 1 && partial.removed == 1 && !partial.base_selected);
+    CHECK(installed(jp_base) && installed(jp_104) && !installed(jp_103));
+    CHECK(LastPreparedBuild(roots) == &jp_104 || LastPreparedBuild(roots) == &asia || LastPreparedBuild(roots) == &usa_base);
+    CHECK(InstalledUpdatesOf(roots, "CUSA10602").size() == 1);
+    CHECK(RemoveInstalledUpdatesOf(roots, "CUSA10602").ok() && !installed(jp_104));
+#endif
+
+    std::ifstream launcher_file(fs::path(TSR_SOURCE_DIR) / "launcher" / "launcher.cpp", std::ios::binary);
+    const std::string launcher((std::istreambuf_iterator<char>(launcher_file)), std::istreambuf_iterator<char>());
+    CHECK(launcher.find("Remove Update") != std::string::npos);
+    CHECK(launcher.find("OtherProcessRunning(CurrentExecutablePath())") != std::string::npos);
+    CHECK(launcher.find("Game Version") == std::string::npos && launcher.find("Game version") == std::string::npos);
+    CHECK(Read(root / "user" / "savedata" / "ROBO13.DAT") == "save");
+    std::error_code cleanup;
+    fs::remove_all(root, cleanup);
+}
+
+void AppendBe32(std::string& out, uint32_t value) {
+    for (int shift = 24; shift >= 0; shift -= 8) out.push_back(char(value >> shift));
+}
+
+// Every file and folder with its own time (a listing's copy of a folder's time can lag behind on NTFS).
+std::map<std::string, fs::file_time_type> Tree(const fs::path& dir) {
+    std::map<std::string, fs::file_time_type> entries;
+    std::error_code ec;
+    for (fs::recursive_directory_iterator it(dir, ec), end; !ec && it != end; it.increment(ec)) {
+        entries[it->path().lexically_relative(dir).generic_string()] = fs::last_write_time(it->path(), ec);
+    }
+    return entries;
+}
+
+// A package that carries only its param.sfo: enough for everything Install does before it unpacks.
+void WriteSfoOnlyPackage(const fs::path& file, const std::string& sfo) {
+    std::string pkg(0x1000, '\0');
+    const auto put32 = [&](size_t at, uint32_t value) {
+        std::string be;
+        AppendBe32(be, value);
+        pkg.replace(at, 4, be);
+    };
+    const uint32_t sfo_offset = 0x1020, total = uint32_t(sfo_offset + sfo.size());
+    put32(0x00, 0x7F434E54);
+    put32(0x10, 1);
+    put32(0x18, 0x1000);
+    put32(0x434, total);
+    std::string entry;
+    AppendBe32(entry, 0x1000);
+    entry.append(12, '\0');
+    AppendBe32(entry, sfo_offset);
+    AppendBe32(entry, uint32_t(sfo.size()));
+    entry.append(8, '\0');
+    Write(file, pkg + entry + sfo);
+}
+
+const GameBuild& BuildByFolder(std::string_view folder) {
+    for (const GameBuild& build : SupportedBuilds()) {
+        if (folder == build.folder) return build;
+    }
+    std::printf("FAIL: no build %.*s\n", int(folder.size()), folder.data());
+    std::exit(1);
+}
+
+std::string FinishedSfo(const GameBuild& build) {
+    const PackageLayer& layer = build.layers.back();
+    return PackageSfo(build.title_id, build.content_id, layer.update ? "gp" : "gd", layer.app_ver, layer.sfo_version);
+}
+
+// Install update upgrades the active game only: an update of another title is refused from its param.sfo, before
+// anything is written, even when that title's base is installed too. Install game may still change the region.
+void TestUpdateTitleGate(const fs::path& scratch) {
+    const fs::path root = scratch / "title-gate";
+    const GameRoots roots{root / "prepared", root / "image"};
+    const fs::path packages = root / "packages";
+    const auto install = [&](const GameBuild& build) {
+        const GamePaths paths = BuildPaths(roots, build);
+        Write(paths.app0 / "sce_sys" / "param.sfo", FinishedSfo(build));
+        Write(paths.app0 / kPreparedMarker, "{\"scope\": \"full\"}");
+        Write(paths.image_dir / "boot.bin", "image");
+        Write(paths.app0 / "ROBO.CPK", "archive");
+        Write(paths.app0 / "ROBO.CPK.undo", "prompt patch undo");
+    };
+    const auto when = fs::file_time_type::clock::now() - std::chrono::hours(1);
+    int step = 0;
+    const auto make_active = [&](const GameBuild& build) {
+        fs::last_write_time(BuildPaths(roots, build).app0 / kPreparedMarker, when + std::chrono::minutes(++step));
+    };
+    const auto package = [&](const GameBuild& build) {
+        const fs::path file = packages / (std::string(build.folder) + (IsUpdateBuild(build) ? "-update.pkg" : "-base.pkg"));
+        WriteSfoOnlyPackage(file, FinishedSfo(build));
+        return file;
+    };
+    const auto attempt = [&](const GameBuild& build, PackageKind kind) {
+        InstallHooks hooks;
+        hooks.expected = kind;
+        return InstallFromPackage(package(build), roots, hooks);
+    };
+
+    const GameBuild& usa = BuildByFolder("CUSA19610-1.00");
+    const GameBuild& usa_101 = BuildByFolder("CUSA19610-1.01");
+    const GameBuild& usa_102 = BuildByFolder("CUSA19610-1.02");
+    const GameBuild& eu = BuildByFolder("CUSA19620-1.00");
+    const GameBuild& eu_101 = BuildByFolder("CUSA19620-1.01");
+    const GameBuild& jp = BuildByFolder("CUSA10602-1.00");
+    const GameBuild& jp_103 = BuildByFolder("CUSA10602-1.03");
+    const GameBuild& jp_104 = BuildByFolder("CUSA10602-1.04");
+    const GameBuild& asia = BuildByFolder("CUSA18093-1.00");
+    for (const GameBuild* base : {&usa, &eu, &jp, &asia}) {
+        install(*base);
+        make_active(*base);
+    }
+    for (const GameBuild* update : {&usa_101, &usa_102, &eu_101, &jp_103, &jp_104}) {
+        const GameCheck identity = CheckPackageIdentity(FinishedSfo(*update));
+        CHECK(identity.build == update && identity.layer > 0);
+    }
+
+    struct Case {
+        const GameBuild* active;
+        const GameBuild* update;
+        bool same_title;
+    };
+    const Case cases[] = {
+        {&jp, &jp_103, true},     {&jp, &jp_104, true},    {&jp, &eu_101, false},   {&jp, &usa_101, false},
+        {&jp, &usa_102, false},   {&eu, &eu_101, true},    {&eu, &jp_103, false},   {&eu, &jp_104, false},
+        {&usa, &usa_101, true},   {&usa, &usa_102, true},  {&usa, &jp_103, false},  {&usa, &eu_101, false},
+        {&asia, &usa_101, false}, {&asia, &eu_101, false}, {&asia, &jp_103, false}, {&asia, &jp_104, false},
+    };
+    for (const Case& test : cases) {
+        make_active(*test.active);
+        CHECK(LastPreparedBuild(roots) == test.active);
+        const fs::path file = package(*test.update);
+        const auto prepared_before = Tree(roots.prepared), image_before = Tree(roots.image);
+        InstallHooks hooks;
+        hooks.expected = PackageKind::kUpdate;
+        const InstallResult result = InstallFromPackage(file, roots, hooks);
+        if (test.same_title) {
+            // Past the gate: the matching base must still be a valid installation (these stand-ins are not).
+            CHECK(result.status == InstallStatus::kUpdateNeedsBase);
+        } else {
+            CHECK(result.status == InstallStatus::kUpdateForOtherTitle);
+            CHECK(result.update_title_id == test.update->title_id);
+            CHECK(result.installed_title_id == test.active->title_id);
+            CHECK(DescribeInstall(result).title == std::string("This update is for ") + test.update->title_id +
+                                                       ", but the installed game is " + test.active->title_id);
+            CHECK(result.recognition.find(test.update->label) != std::string::npos);
+        }
+        CHECK(Tree(roots.prepared) == prepared_before);
+        CHECK(Tree(roots.image) == image_before);
+        CHECK(LastPreparedBuild(roots) == test.active);
+        CHECK(!fs::exists(BuildPaths(roots, *test.update).app0));
+    }
+
+    // Install game may switch region: another title's base passes on to unpacking (refused here only because the
+    // stand-in package has no keys).
+    make_active(jp);
+    CHECK(attempt(eu, PackageKind::kBase).status == InstallStatus::kUnsupportedPackage);
+    CHECK(attempt(eu_101, PackageKind::kBase).status == InstallStatus::kExpectedBasePackage);
+    CHECK(attempt(eu, PackageKind::kUpdate).status == InstallStatus::kExpectedUpdatePackage);
+    CHECK(attempt(eu_101, PackageKind::kAny).status == InstallStatus::kUpdateNeedsBase);
+    CHECK(LastPreparedBuild(roots) == &jp);
+
+    // Remove update stays scoped to the active title; what it leaves aside never counts as installed.
+    install(jp_103);
+    install(eu_101);
+    fs::last_write_time(BuildPaths(roots, eu_101).app0 / kPreparedMarker, when);
+    make_active(jp_103);
+    CHECK(LastPreparedBuild(roots) == &jp_103);
+    const fs::path aside = roots.prepared / (std::string(jp_104.folder) + ".removing");
+    Write(aside / "sce_sys" / "param.sfo", FinishedSfo(jp_104));
+    Write(aside / kPreparedMarker, "{\"scope\": \"full\"}");
+    CHECK(InstalledUpdatesOf(roots, jp.title_id).size() == 1);
+    const RemoveAllResult removed = RemoveInstalledUpdatesOf(roots, jp.title_id);
+    CHECK(removed.ok() && removed.removed == 1 && removed.base_selected);
+    CHECK(LastPreparedBuild(roots) == &jp);
+    CHECK(InstalledUpdatesOf(roots, jp.title_id).empty());
+    CHECK(InstalledUpdatesOf(roots, eu.title_id).size() == 1);
+    for (const GameBuild* build : PreparedBuilds(roots)) CHECK(build != &jp_104 && build != &jp_103);
+    CHECK(FinishInterruptedRemovals(roots));
+    CHECK(!fs::exists(aside));
+    CHECK(attempt(eu_101, PackageKind::kUpdate).status == InstallStatus::kUpdateForOtherTitle);
+    CHECK(LastPreparedBuild(roots) == &jp);
+
+    std::ifstream launcher_file(fs::path(TSR_SOURCE_DIR) / "launcher" / "launcher.cpp", std::ios::binary);
+    const std::string launcher((std::istreambuf_iterator<char>(launcher_file)), std::istreambuf_iterator<char>());
+    CHECK(launcher.find("DescribeInstall(outcome->status)") == std::string::npos);
+    CHECK(launcher.find("const InstallMessage message = DescribeInstall(*outcome);") != std::string::npos);
+    if (!failures) {
+        std::printf("install update title gate: 16 active/update pairs over four installed regions, foreign updates "
+                    "refused with nothing changed, same-title updates reach the base check, Install game may switch "
+                    "region, Remove Update scoped\n");
+    }
+    std::error_code ec;
     fs::remove_all(root, ec);
 }
 
@@ -776,7 +1077,8 @@ void TestBuildDiagnostics(const fs::path& scratch) {
     CHECK(AnyLine(report.lines, "supported build of this TITLE_ID: CUSA19610 1.02 USA (base game with update, APP_VER 01.02"));
     CHECK(AnyLine(report.lines, "identity check: param.sfo APP_VER 01.03 / VERSION 01.00 is not part of a supported build"));
     CHECK(AnyLine(report.lines, "eboot.bin: 4096 bytes, SHA-256 "));
-    CHECK(AnyLine(report.lines, "eboot.bin matches no supported executable (CUSA19610 1.00 USA, CUSA19610 1.01 USA and CUSA19610 1.02 USA)"));
+    CHECK(AnyLine(report.lines, "eboot.bin matches no supported executable (CUSA19610 USA 1.00, 1.01, 1.02; CUSA19620 Europe "
+                                "1.00, 1.01; CUSA10602 Japan 1.00, 1.03, 1.04; CUSA18093 Asia 1.00)"));
     CHECK(AnyLine(report.lines, "Skip Intro, Exit Game and Render resolution are tied to a supported build's exact code and stay off"));
     CHECK(!DiagnoseUnsupportedBuild(*OpenFolderSource(odd), PackageSfo("CUSA00000", "XX0000-CUSA00000_00-OTHERGAME", "gd", "01.00", "01.00")).recognized);
 
@@ -841,6 +1143,8 @@ int main() {
     TestRealPackages(scratch);
     TestRealInstall();
     TestRemoveUpdateSafety(scratch);
+    TestRemoveAllUpdates(scratch);
+    TestUpdateTitleGate(scratch);
     TestLocalInstall(scratch);
     fs::remove_all(scratch, ec);
     std::printf("%s\n", failures ? "FAILED" : "all passed");

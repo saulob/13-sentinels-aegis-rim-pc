@@ -14,14 +14,18 @@ NO GAME FILES ARE INCLUDED
 You need your own legally obtained copy of the game: a decrypted 13 Sentinels:
 Aegis Rim PS4 package (.pkg). This port runs:
 
-  USA: Title ID CUSA19610, versions 1.00 (the base package), 1.01 and 1.02
-       (each update is installed over the base package)
+  USA:    Title ID CUSA19610, versions 1.00 (base), 1.01 and 1.02
+  Europe: Title ID CUSA19620, versions 1.00 (base) and 1.01
+  Japan:  Title ID CUSA10602, versions 1.00 (base), 1.03 and 1.04
+  Asia:   Title ID CUSA18093, version 1.00 (base)
+  (each update is installed over the base package of the same region)
 
 The base game plays on its own; an update can be installed later from the
-launcher's Play page and leaves 1.00 installed. The launcher detects the
-installed builds by itself and starts the newest supported update you have
-installed; there is no version to pick. Any other version is refused. A package
-still encrypted for a PS4 console cannot be unpacked on a PC.
+launcher's Play page and leaves the base installed. The launcher detects the
+installed builds by itself and starts the newest supported update of the
+region you installed last; there is no version to pick. Any other version is
+refused. A package still encrypted for a PS4 console cannot be unpacked on a
+PC.
 
 This is an early development release: the game has not been verified to boot.
 
@@ -34,8 +38,8 @@ REQUIREMENTS
   in software.
 - A graphics card and driver with Vulkan 1.3, VK_EXT_robustness2,
   VK_KHR_push_descriptor and VK_EXT_vertex_attribute_divisor
-- Your own 13 Sentinels: Aegis Rim package, plus about 4.5 GB of free disk space
-  next to the program for the installed game (about 0.7 GB more for the update)
+- Your own 13 Sentinels: Aegis Rim package, plus up to 5 GB of free disk space
+  next to the program for the installed game (up to 1.3 GB more for an update)
 - Nothing else: no Python or other tools are needed
 
 
@@ -43,11 +47,11 @@ INSTALL
 -------
 1. Extract the ZIP anywhere you can write to (not "Program Files").
 2. Run 13_sentinels_launcher.exe. The launcher opens.
-3. On the Play page, click "Install game..." and select your USA 1.00 .pkg
+3. On the Play page, click "Install game..." and select your base game .pkg
    file. The launcher checks the package and unpacks it into the "game" folder
    next to the program. The .pkg file is only read.
-4. Optional: click "Install update..." and select the 1.01 or 1.02 update .pkg
-   file. 1.00 stays installed; the newest installed update starts.
+4. Optional: click "Install update..." and select an update .pkg of the same
+   region. The base stays installed; the newest installed update starts.
 5. Press PLAY.
 
 To repair the game files, use "Reinstall game..." on the Play page. Your

@@ -19,6 +19,7 @@
 #include "tsr_renderer.h"
 #include "tsr_png.h"
 #include "tsr_settings.h"
+#include "tsr_title.h"
 #include "tsr_toggles.h"
 #include "tsr_write_log.h"
 #include "tsrgpu.h"
@@ -222,7 +223,8 @@ extern "C" int tsrgpu_init(const TsrGpuConfig* config) {
     Common::FS::SetUserDir(std::filesystem::path(std::u8string(user_dir.begin(), user_dir.end())));
     g_sdk_version = config->sdk_version;
     Core::Emulator::FillElfInfo(*config);
-    const std::string title = config->title ? config->title : "13 Sentinels: Aegis Rim";
+    const std::string title =
+        TsrTitle::Base(config->title ? config->title : TSR_WINDOW_TITLE, config->build ? config->build : "");
     const s32 width = config->width, height = config->height;
     g_window_thread = std::thread([title, width, height] {
         Common::SetCurrentThreadName("tsr:window");

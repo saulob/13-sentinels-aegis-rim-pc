@@ -556,6 +556,24 @@ void TestLanguageModel(const fs::path& scratch) {
     CHECK(EffectiveTextLanguage(english_only_text, "german").key == "english");
     CHECK(EffectiveTextLanguage(Support(true), "german").ps4_id == 4);
     CHECK(EffectiveTextLanguage(Support(false), "spanish").ps4_id == 3);
+
+    // Japan shows Japanese only; Asia Traditional (its default) or Simplified Chinese. A Western preference falls back.
+    for (const GameBuild& build : SupportedBuilds()) {
+        const LanguageSupport support = LanguagesOf(empty, &build);
+        const std::string_view title = build.title_id;
+        if (title == "CUSA10602") {
+            CHECK(support.text.size() == 1 && support.text.front().key == "japanese");
+            CHECK(EffectiveTextLanguage(support, "english").ps4_id == 0);
+        } else if (title == "CUSA18093") {
+            CHECK(support.text.size() == 2 && support.text.front().key == "tchinese");
+            CHECK(EffectiveTextLanguage(support, "english").ps4_id == 10);
+            CHECK(EffectiveTextLanguage(support, "schinese").ps4_id == 11);
+        } else {
+            CHECK(support.text.size() == 5 && support.text.front().key == "english");
+            CHECK(EffectiveTextLanguage(support, "japanese").ps4_id == 1);
+        }
+        CHECK(!support.english_voices);
+    }
 }
 
 // The loader and the build no longer carry a voice override: the game's own Audio Language option decides.
@@ -621,14 +639,14 @@ void TestSettings(const fs::path& scratch) {
           std::string::npos);
 }
 
+// A build in the profile table is supported: the Play page shows no per-build verification warning.
 void TestBuildStatus() {
-    CHECK(std::string_view(Build("1.00").support_note).empty());
-    CHECK(std::string_view(Build("1.02").support_note).empty());
-    CHECK(!std::string_view(Build("1.01").support_note).empty());
-    for (const GameBuild& build : SupportedBuilds()) {
-        CHECK(std::string_view(build.support_note).find("Early development") == std::string_view::npos);
+    for (const char* file : {"launcher/launcher.cpp", "launcher/game_profile.cpp", "launcher/game_profile.h"}) {
+        const std::string source = ReadSource(file);
+        CHECK(source.find("Early development") == std::string::npos);
+        CHECK(source.find("Not yet verified to run") == std::string::npos);
+        CHECK(source.find("support_note") == std::string::npos);
     }
-    CHECK(ReadSource("launcher/launcher.cpp").find("Early development") == std::string::npos);
 }
 
 } // namespace

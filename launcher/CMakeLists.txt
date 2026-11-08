@@ -55,17 +55,18 @@ add_custom_command(OUTPUT ${TSR_PAGE_ICON_SOURCE}
     COMMENT "Embedding the page icons")
 target_sources(tsr_launcher_core PRIVATE ${TSR_PAGE_ICON_SOURCE})
 
-# The Xbox controller icon patches (prompts/xbox-prompts-<version>.dcpx) as byte arrays, prompts_patch.h.
-foreach(version 100 102)
-    string(SUBSTRING ${version} 0 1 major)
-    string(SUBSTRING ${version} 1 2 minor)
-    set(patch ${CMAKE_CURRENT_SOURCE_DIR}/prompts/xbox-prompts-${major}.${minor}.dcpx)
-    set(patch_source ${CMAKE_BINARY_DIR}/generated/xbox_prompts_${version}.cpp)
+# The Xbox controller icon patches (prompts/xbox-prompts-<key>.dcpx) as byte arrays, prompts_patch.h: key=symbol.
+foreach(entry 1.00=100 1.02=102 eu-1.00=Europe100 jp-1.00=Japan100 jp-1.03=Japan103 jp-1.04=Japan104 asia-1.00=Asia100)
+    string(REPLACE "=" ";" parts ${entry})
+    list(GET parts 0 key)
+    list(GET parts 1 symbol)
+    set(patch ${CMAKE_CURRENT_SOURCE_DIR}/prompts/xbox-prompts-${key}.dcpx)
+    set(patch_source ${CMAKE_BINARY_DIR}/generated/xbox_prompts_${symbol}.cpp)
     add_custom_command(OUTPUT ${patch_source}
-        COMMAND ${CMAKE_COMMAND} -DINPUT=${patch} -DOUTPUT=${patch_source} -DSYMBOL=kXboxPrompts${version}Patch
+        COMMAND ${CMAKE_COMMAND} -DINPUT=${patch} -DOUTPUT=${patch_source} -DSYMBOL=kXboxPrompts${symbol}Patch
                 -P ${CMAKE_CURRENT_SOURCE_DIR}/embed.cmake
         DEPENDS ${patch} ${CMAKE_CURRENT_SOURCE_DIR}/embed.cmake
-        COMMENT "Embedding prompts/xbox-prompts-${major}.${minor}.dcpx")
+        COMMENT "Embedding prompts/xbox-prompts-${key}.dcpx")
     target_sources(tsr_launcher_core PRIVATE ${patch_source})
 endforeach()
 target_include_directories(tsr_launcher_core PRIVATE ${PROJECT_SOURCE_DIR}/gpu/shim)

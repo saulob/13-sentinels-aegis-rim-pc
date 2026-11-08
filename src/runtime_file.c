@@ -54,7 +54,7 @@ typedef struct { uint64_t offset, size; const unsigned char *data; } OverlayPatc
 typedef struct { char guest[512]; uint64_t length; OverlayPatch *patches; size_t count; } Overlay;
 typedef struct { int used, host; Listing *dir; size_t position; char path[512]; const Overlay *overlay;
                  int traced; uint64_t read_bytes, written_bytes; } File;
-typedef struct { char guest[64]; char host[512]; } Mount;
+typedef struct { char guest[64]; char host[512]; int read_only; } Mount;
 #define MAX_OVERLAYS 4
 static File files[MAX_FILES];
 static Mount mounts[MAX_MOUNTS];
@@ -84,18 +84,33 @@ static void note_read(int fd,File *f,int64_t n) {
     if (f && f->traced) f->read_bytes+=(uint64_t)n;
 }
 
-int runtime_file_mount(const char *guest,const char *host) {
+static int mount_as(const char *guest,const char *host,int read_only) {
     pthread_mutex_lock(&lock);
     for (size_t i=0;i<mount_count;++i) if (!strcmp(mounts[i].guest,guest)) {
         snprintf(mounts[i].host,sizeof(mounts[i].host),"%s",host);
+        mounts[i].read_only=read_only;
         pthread_mutex_unlock(&lock); return 0;
     }
     if (mount_count==MAX_MOUNTS || strlen(guest)>=64 || strlen(host)>=512) { pthread_mutex_unlock(&lock); return -1; }
     snprintf(mounts[mount_count].guest,64,"%s",guest);
     snprintf(mounts[mount_count].host,512,"%s",host);
+    mounts[mount_count].read_only=read_only;
     ++mount_count;
     pthread_mutex_unlock(&lock);
     return 0;
+}
+int runtime_file_mount(const char *guest,const char *host) { return mount_as(guest,host,0); }
+int runtime_file_mount_read_only(const char *guest,const char *host) { return mount_as(guest,host,1); }
+static int read_only_mount(const char *p) {
+    int found=0;
+    if (!p) return 0;
+    pthread_mutex_lock(&lock);
+    for (size_t i=0;i<mount_count && !found;++i) {
+        const size_t n=strlen(mounts[i].guest);
+        found=mounts[i].read_only && !strncmp(p,mounts[i].guest,n) && (!p[n] || p[n]=='/');
+    }
+    pthread_mutex_unlock(&lock);
+    return found;
 }
 void runtime_file_unmount(const char *guest) {
     pthread_mutex_lock(&lock);
@@ -287,7 +302,7 @@ static int game_path(const char *p) {
     if (!p || !*p) return 0;
     if (*p!='/') return 1;
     return (!strncmp(p,"/app0",5) && (!p[5] || p[5]=='/')) ||
-           (!strncmp(p,"/hostapp",8) && (!p[8] || p[8]=='/'));
+           (!strncmp(p,"/hostapp",8) && (!p[8] || p[8]=='/')) || read_only_mount(p);
 }
 /* All operations return >=0 or -(host errno); wrappers adapt the convention. */
 static int64_t open_file(const char *guest,int flags,int mode);

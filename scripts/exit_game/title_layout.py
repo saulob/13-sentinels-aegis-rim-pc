@@ -1,4 +1,4 @@
-"""The title layout (GUI/title.mbs, FMBS v7/v8) as the Exit Game tools need it: its record tables, the elements a part
+"""The title layout (GUI/title.mbs, FMBS v6 to v8) as the Exit Game tools need it: its record tables, the elements a part
 draws, and byte edits recorded against the original data."""
 import struct
 
@@ -9,7 +9,7 @@ TEXTURED = 1
 
 class Layout:
     def __init__(self, data):
-        assert data[:4] == b'FMBS' and data[0x12] in (7, 8), 'not an FMBS v7/v8 layout'
+        assert data[:4] == b'FMBS' and data[0x12] in (6, 7, 8), 'not an FMBS v6/v7/v8 layout'
         self.original = bytes(data)
         self.d = bytearray(data)
         self.offsets = [struct.unpack_from('<Q', data, 0xb0 + 8 * i)[0] for i in range(11)]

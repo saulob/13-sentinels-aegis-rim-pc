@@ -162,12 +162,23 @@ std::optional<PromptStyle> ParsePromptStyle(std::string_view key) {
 }
 
 std::span<const uint8_t> XboxPromptsPatch(const GameBuild& build) {
-    const std::string_view version = build.version;
-    if (version == "1.00" || version == "1.01") {
-        return {kXboxPrompts100Patch, kXboxPrompts100PatchSize};
-    }
-    if (version == "1.02") {
-        return {kXboxPrompts102Patch, kXboxPrompts102PatchSize};
+    static const struct {
+        std::string_view key;
+        const uint8_t* data;
+        const size_t* size;
+    } kPatches[] = {
+        {"1.00", kXboxPrompts100Patch, &kXboxPrompts100PatchSize},
+        {"1.02", kXboxPrompts102Patch, &kXboxPrompts102PatchSize},
+        {"eu-1.00", kXboxPromptsEurope100Patch, &kXboxPromptsEurope100PatchSize},
+        {"jp-1.00", kXboxPromptsJapan100Patch, &kXboxPromptsJapan100PatchSize},
+        {"jp-1.03", kXboxPromptsJapan103Patch, &kXboxPromptsJapan103PatchSize},
+        {"jp-1.04", kXboxPromptsJapan104Patch, &kXboxPromptsJapan104PatchSize},
+        {"asia-1.00", kXboxPromptsAsia100Patch, &kXboxPromptsAsia100PatchSize},
+    };
+    for (const auto& patch : kPatches) {
+        if (patch.key == build.prompt_patch) {
+            return {patch.data, *patch.size};
+        }
     }
     return {};
 }

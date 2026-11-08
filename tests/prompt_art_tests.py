@@ -1,11 +1,18 @@
 #!/usr/bin/env python3
-"""Looks at the art of the Xbox patches: the entries tsr-game-profile-tests exported before and after the patch (real
-archives of the packages) are decoded and every PlayStation variant is checked to be gone and the rest to be intact.
+"""Looks at the art of the Xbox patches: original entries are decoded before and after the committed patch and every
+PlayStation variant is checked to be gone and the rest to be intact.
 
-    prompt_art_tests.py build/test-prompt-art
+    prompt_art_tests.py [build/test-prompt-art] [--archives ROOT]
+
+build/test-prompt-art holds the entries tsr-game-profile-tests exported from the USA packages. ROOT (or the environment
+variable TSR_PROMPT_ARCHIVES) holds the archives of each build, unpacked from its own package, one folder per package:
+usa100, usa102, eu100, jp100, jp103, jp104, asia100 (an update's folder holds only its own archives). Each patch whose
+archives are all there is applied to them in memory: every target must be the original (CRC32 before), give the recorded
+result, change nothing outside its texture, and leave no PlayStation symbol in what the build reads.
 
 Needs Python with numpy, Pillow and scipy (tools\\setup.ps1 -InstallPython). Exits 2 when there is nothing to check.
 """
+import os
 import struct
 import sys
 import zlib
@@ -17,14 +24,17 @@ from scipy.signal import fftconvolve
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / 'scripts' / 'prompts'))
+import cpk  # noqa: E402
 import draw_manual  # noqa: E402
 import draw_xbox  # noqa: E402
 import ftex  # noqa: E402
+import make_manual_templates  # noqa: E402
 
 sys.path.insert(0, str(HERE.parent / 'scripts' / 'exit_game'))
 from title_layout import PARTS, POSITIONS, UVS, Layout  # noqa: E402
 
 ATLAS = 'HD_Interface_arranged000.gnf'
+PROMPTS = HERE.parent / 'launcher' / 'prompts'
 failures = 0
 checks = 0
 
@@ -77,30 +87,49 @@ def flat_matches(atlas, templates, threshold=0.82):
 PATCHES = {'100': 'xbox-prompts-1.00.dcpx', '102': 'xbox-prompts-1.02.dcpx'}
 ENTRIES = {'100': 'GUI_Interface.ftx', '102': 'gui_interface.ftx'}
 SEMANTIC_LETTER = {'cross': 'A', 'circle': 'B', 'square': 'X', 'tri': 'Y'}
+# The shapes that stay, per layout: the directional pad, the sticks and the shoulder plates are not PlayStation symbols.
+KEPT = {'100': [197, 218, 220, 222, 193, 195], '102': [206, 250, 256, 263, 202, 204],
+        'jp100': [199, 222, 224, 226, 195, 197], 'jp103': [199, 222, 224, 226, 195, 197],
+        'jp104': [208, 254, 260, 267, 204, 206], 'cn': [197, 220, 222, 224, 193, 195],
+        'tw': [197, 218, 220, 222, 193, 195]}
 
 
-def committed_patch_applied(version, original):
-    """The original entry with the committed .dcpx applied: what the launcher writes into the archive."""
-    blob = (HERE.parent / 'launcher' / 'prompts' / PATCHES[version]).read_bytes()
-    entry = 'GUI/Interface.ftx' if version == '100' else 'gui/interface.ftx'
-    crc = zlib.crc32(original)
-    pos = 12
+def read_patch(path):
+    """The targets of a DCPX3 patch: dicts with archive, name, size, before, after and runs [(offset, 16 bytes)]."""
+    blob = Path(path).read_bytes()
+    check(blob[:8] == b'DCPX3\0\0\0', f'{Path(path).name} is not a DCPX3 patch')
+    pos, targets = 12, []
     for _ in range(struct.unpack_from('<I', blob, 8)[0]):
         names = []
         for _ in range(2):
             n = struct.unpack_from('<H', blob, pos)[0]
             names.append(blob[pos + 2:pos + 2 + n].decode())
             pos += 2 + n
-        size, before, after, runs = struct.unpack_from('<IIII', blob, pos)
+        size, before, after, count = struct.unpack_from('<IIII', blob, pos)
         pos += 16
-        if names[1].lower() == entry.lower() and size == len(original) and before == crc:
-            data = bytearray(original)
-            for i in range(runs):
-                offset = struct.unpack_from('<I', blob, pos + i * 20)[0]
-                data[offset:offset + 16] = blob[pos + i * 20 + 4:pos + i * 20 + 20]
-            check(zlib.crc32(data) == after, f'{version}: the patch result does not match its recorded CRC32')
-            return bytes(data)
-        pos += runs * 20
+        runs = [(struct.unpack_from('<I', blob, pos + i * 20)[0], blob[pos + i * 20 + 4:pos + i * 20 + 20]) for i in range(count)]
+        pos += count * 20
+        targets.append(dict(archive=names[0], name=names[1], size=size, before=before, after=after, runs=runs))
+    check(pos == len(blob), f'{Path(path).name} has {len(blob) - pos} trailing bytes')
+    return targets
+
+
+def apply_target(target, original):
+    data = bytearray(original)
+    for offset, run in target['runs']:
+        data[offset:offset + 16] = run
+    return bytes(data)
+
+
+def committed_patch_applied(version, original):
+    """The original entry with the committed .dcpx applied: what the launcher writes into the archive."""
+    entry = 'GUI/Interface.ftx' if version == '100' else 'gui/interface.ftx'
+    crc = zlib.crc32(original)
+    for target in read_patch(PROMPTS / PATCHES[version]):
+        if target['name'].lower() == entry.lower() and target['size'] == len(original) and target['before'] == crc:
+            data = apply_target(target, original)
+            check(zlib.crc32(data) == target['after'], f'{version}: the patch result does not match its recorded CRC32')
+            return data
     return None
 
 
@@ -154,6 +183,23 @@ def find_shape(template, atlas_alpha):
     return x, y, float(ssd[y, x]) / max(1.0, float((t * t).sum()))
 
 
+def check_symbols(atlas, uv, layout, key):
+    """Each sprite of the layout's table shows the symbol it is named for in the original atlas."""
+    rect = lambda i: draw_xbox.rect_of(uv[i])
+    sprites = draw_xbox.SPRITES[layout]
+    for symbol, index in sprites['disc_white'].items():
+        check(symbol_of(glyph_mask(atlas, rect(index), False)) == symbol, f'{key}: disc sprite {index} is not the {symbol} symbol')
+    for symbol, index in sprites['disc_colour'].items():
+        check(symbol_of(glyph_mask(atlas, rect(index), True)) == symbol, f'{key}: coloured disc sprite {index} is not the {symbol} symbol')
+    for symbol, index in sprites['flat'].items():
+        box = draw_xbox.ink_box(atlas, rect(index))
+        check(symbol_of(ink_mask(atlas, box)) == symbol, f'{key}: flat sprite {index} is not the {symbol} symbol')
+    for box, symbol, mode in draw_xbox.EXTRA[draw_xbox.ATLAS_OF[layout]]:
+        ink = draw_xbox.ink_box(atlas, box)
+        if mode == 'flat':
+            check(symbol_of(ink_mask(atlas, ink)) == symbol, f'{key}: extra shape at {box} is not the {symbol} symbol')
+
+
 def check_semantics(roots):
     """Cross gives A, circle B, square X, triangle Y: the letter table, the symbol each original sprite really shows, and
     every PlayStation shape of the 1.00 atlas repainted wherever it sits in the other atlas."""
@@ -169,18 +215,7 @@ def check_semantics(roots):
         patched[version] = decode_bytes(result)
         uvs[version] = draw_xbox.quads(root / 'original' / ENTRIES[version].replace('.ftx', '.mbs'))
     for version, atlas in originals.items():
-        rect = lambda i: draw_xbox.rect_of(uvs[version][i])
-        for symbol, index in draw_xbox.SPRITES[version]['disc_white'].items():
-            check(symbol_of(glyph_mask(atlas, rect(index), False)) == symbol, f'{version}: disc sprite {index} is not the {symbol} symbol')
-        for symbol, index in draw_xbox.SPRITES[version]['disc_colour'].items():
-            check(symbol_of(glyph_mask(atlas, rect(index), True)) == symbol, f'{version}: coloured disc sprite {index} is not the {symbol} symbol')
-        for symbol, index in draw_xbox.SPRITES[version]['flat'].items():
-            box = draw_xbox.ink_box(atlas, rect(index))
-            check(symbol_of(ink_mask(atlas, box)) == symbol, f'{version}: flat sprite {index} is not the {symbol} symbol')
-        for box, symbol, mode in draw_xbox.EXTRA[version]:
-            ink = draw_xbox.ink_box(atlas, box)
-            if mode == 'flat':
-                check(symbol_of(ink_mask(atlas, ink)) == symbol, f'{version}: extra shape at {box} is not the {symbol} symbol')
+        check_symbols(atlas, uvs[version], version, version)
 
     # The 1.00 atlas is the reference: each of its painted shapes is searched for in the other atlas and must be repainted
     # there, and as the same letter (the repainted pixels correlate with the reference's).
@@ -214,12 +249,8 @@ def check_semantics(roots):
           f'{", ".join(roots)} are the symbols they are named for')
 
 
-def check_atlas(root, version, key):
-    before = decode(root / 'original' / ('GUI_Interface.ftx' if version == '100' else 'gui_interface.ftx'), ATLAS)
-    after = decode_bytes(committed_patch_applied(version, (root / 'original' / ENTRIES[version]).read_bytes()))
-    mbs = root / 'original' / ('GUI_Interface.mbs' if version == '100' else 'gui_interface.mbs')
-    uv = draw_xbox.quads(mbs)
-    sprites = draw_xbox.SPRITES[version]
+def check_atlas_images(before, after, uv, layout, key):
+    sprites = draw_xbox.SPRITES[layout]
     rect = lambda i: draw_xbox.rect_of(uv[i])
     changed = 0
     for role in ('disc_white', 'disc_colour', 'flat', 'outline', 'faint', 'glow'):
@@ -231,14 +262,14 @@ def check_atlas(root, version, key):
         check(differs(before, after, rect(index)), f'{key}: digit sprite {index} ({label}) is unchanged')
     for index in list(sprites['ovals'].values()) + list(sprites['words'].values()) + sprites['logos'] + [sprites['pad']]:
         check(differs(before, after, rect(index)), f'{key}: sprite {index} is unchanged')
-    for box, symbol, mode in draw_xbox.EXTRA[version]:
+    for index in sprites.get('cleared', []):
+        x0, y0, x1, y1 = rect(index)
+        check(before[y0:y1, x0:x1, 3].max() > 128 and after[y0:y1, x0:x1, 3].max() < 16, f'{key}: sprite {index} is not cleared')
+    for box, symbol, mode in draw_xbox.EXTRA[draw_xbox.ATLAS_OF[layout]]:
         check(differs(before, after, box), f'{key}: extra {symbol} {mode} at {box} is unchanged')
     for box in draw_xbox.BLOCK_WORDS:
         check(differs(before, after, box), f'{key}: label at {box} is unchanged')
-
-    # The shapes that stay: the directional pad, the sticks and the shoulder plates are not PlayStation symbols.
-    kept = {'100': [292, 313, 315, 317, 288, 290], '102': [302, 346, 352, 359, 298, 300]}[version]
-    for index in kept:
+    for index in KEPT[layout]:
         check(not visibly_differs(before, after, rect(index)), f'{key}: sprite {index} (pad, stick or plate) was changed')
 
     # No flat PlayStation shape is left anywhere in the atlas.
@@ -251,6 +282,12 @@ def check_atlas(root, version, key):
     left = flat_matches(after, templates)
     check(not left, f'{key}: flat PlayStation shapes are left after patching: {left}')
     print(f'prompt art {key}: {changed} symbol sprites repainted, pad/stick/plates kept, no flat shape left')
+
+
+def check_atlas(root, version, key):
+    before = decode(root / 'original' / ENTRIES[version], ATLAS)
+    after = decode_bytes(committed_patch_applied(version, (root / 'original' / ENTRIES[version]).read_bytes()))
+    check_atlas_images(before, after, draw_xbox.quads(root / 'original' / ENTRIES[version].replace('.ftx', '.mbs')), version, key)
 
 
 BUTTON_PARTS = {'BUTTON_BATSU': 'cross', 'BUTTON_CIRCLE': 'circle', 'BUTTON_SQUARE': 'square', 'BUTTON_TRIANGLE': 'tri'}
@@ -288,13 +325,9 @@ def letter_shape(alpha, turn=0.0):
     return (v - v.mean()) / (v.std() + 1e-6)
 
 
-def check_button_parts(root, version, key):
+def check_button_part_images(layout, before, after, key):
     """Every atlas sprite the face-button parts of the game's own layout draw, as the game draws it (BUTTON_BATSU turns
     a "+" by 45 degrees into the Cross): repainted, no longer the PlayStation symbol, and a turned letter upright."""
-    layout = Layout((root / 'original' / ENTRIES[version].replace('.ftx', '.mbs')).read_bytes())
-    blob = (root / 'original' / ENTRIES[version]).read_bytes()
-    before = decode_bytes(blob)
-    after = decode_bytes(committed_patch_applied(version, blob))
     turned_cross = 0
     for part, symbol in BUTTON_PARTS.items():
         sprites = part_sprites(layout, part)
@@ -324,56 +357,213 @@ def check_button_parts(root, version, key):
     print(f'prompt art {key}: face-button parts repainted as drawn on screen, {turned_cross} turned Cross sprites')
 
 
+def check_button_parts(root, version, key):
+    layout = Layout((root / 'original' / ENTRIES[version].replace('.ftx', '.mbs')).read_bytes())
+    blob = (root / 'original' / ENTRIES[version]).read_bytes()
+    check_button_part_images(layout, decode_bytes(blob), decode_bytes(committed_patch_applied(version, blob)), key)
+
+
+def icons_on(page, templates, aligned=False):
+    return [c for c in draw_manual.candidates(page)
+            if draw_manual.classify(c[0], page.mean(-1)[c[1][0], c[1][1]], templates, aligned)]
+
+
+def check_manual_page(name, before, after, templates, key, aligned=False):
+    # An icon is still PlayStation when it matches and its pixels are the page's own: the new pills match too.
+    left = [c for c in icons_on(after, templates, aligned) if np.array_equal(after[c[1][0], c[1][1]], before[c[1][0], c[1][1]])]
+    was = icons_on(before, templates, aligned)
+    check(len(was) >= 1, f'{key}: {name} has no PlayStation icon to replace')
+    check(not left, f'{key}: {name} still shows {len(left)} PlayStation icon(s)')
+    return len(was)
+
+
 def check_manual(root, templates, key):
     pages = sorted(p for p in (root / 'original').glob('Manual_Manual*.ftx'))
     check(len(pages) >= 10, f'{key}: only {len(pages)} manual pages patched')
     total = 0
     for page in pages:
         before = np.array(ftex.decode(page.read_bytes(), ftex.textures(page.read_bytes())[0]).convert('RGB'))
-        patched = root / 'patched' / page.name
-        data = patched.read_bytes()
+        data = (root / 'patched' / page.name).read_bytes()
         after = np.array(ftex.decode(data, ftex.textures(data)[0]).convert('RGB'))
-        # An icon is still PlayStation when it matches and its pixels are the page's own: the new pills match too.
-        left = [c for c in draw_manual.candidates(after)
-                if draw_manual.classify(c[0], after.mean(-1)[c[1][0], c[1][1]], templates)
-                and np.array_equal(after[c[1][0], c[1][1]], before[c[1][0], c[1][1]])]
-        was = [c for c in draw_manual.candidates(before)
-               if draw_manual.classify(c[0], before.mean(-1)[c[1][0], c[1][1]], templates)]
-        check(len(was) >= 1, f'{key}: {page.name} has no PlayStation icon to replace')
-        check(not left, f'{key}: {page.name} still shows {len(left)} PlayStation icon(s)')
-        total += len(was)
+        total += check_manual_page(page.name, before, after, templates, key)
     print(f'prompt art {key}: {len(pages)} manual pages, {total} icons replaced, none left')
 
 
-def main():
-    folder = Path(sys.argv[1])
-    if not (folder / 'templates').is_dir() or not (folder / '100').is_dir():
-        print('skipped: no exported entries (run the Packages group with TSR_TEST_PACKAGES set first)')
-        return 2
-    import tempfile
-    with tempfile.TemporaryDirectory() as work:
-        crops = Path(work)
-        pages = {}
-        for number, name in ((6, 'Manual_Manual05.ftx'), (7, 'Manual_Manual06.ftx')):
-            data = (folder / 'templates' / name).read_bytes()
-            Image.fromarray(np.array(ftex.decode(data, ftex.textures(data)[0]).convert('RGB'))).save(crops / f'page{number:02d}.png')
-        import make_manual_templates
-        sys.argv = ['make_manual_templates', str(crops / 'page06.png'), str(crops / 'page07.png'), str(crops / 'tpl')]
-        make_manual_templates.main()
-        templates = draw_manual.load_templates(crops / 'tpl')
-    roots = {}
-    for version in ('100', '102'):
-        root = folder / version
-        if not root.is_dir():
-            print(f'skipped: no exported entries for {version}')
+def make_templates(page06, page07, work):
+    Image.fromarray(page06).save(work / 'page06.png')
+    Image.fromarray(page07).save(work / 'page07.png')
+    sys.argv = ['make_manual_templates', str(work / 'page06.png'), str(work / 'page07.png'), str(work / 'tpl')]
+    make_manual_templates.main()
+    return draw_manual.load_templates(work / 'tpl')
+
+
+def page_rgb(blob):
+    return np.array(ftex.decode(blob, ftex.textures(blob)[0]).convert('RGB'))
+
+
+# Per patch: the package folders its archives come from (first match wins) and what the build reads, as the archives it
+# mounts (the update first) and the layout table, once per language. `aligned`: pills are also matched a pixel wider.
+LANGUAGES = ['US', 'FR', 'GE', 'IT', 'SP']
+ARCHIVE_BUILDS = {
+    'xbox-prompts-1.00.dcpx': (['usa100'], [([f'ROBO_{lang}.CPK'], '100') for lang in LANGUAGES], False),
+    'xbox-prompts-1.02.dcpx': (['usa102', 'usa100'], [([f'ROBO_PATCH2_{lang}.CPK', f'ROBO_{lang}.CPK'], '102') for lang in LANGUAGES], False),
+    'xbox-prompts-eu-1.00.dcpx': (['eu100'], [([f'ROBO_{lang}.CPK'], '100') for lang in LANGUAGES], False),
+    'xbox-prompts-jp-1.00.dcpx': (['jp100'], [(['ROBO.CPK'], 'jp100')], True),
+    'xbox-prompts-jp-1.03.dcpx': (['jp103', 'jp100'], [(['ROBO_PATCH2.CPK', 'ROBO_PATCH.CPK', 'ROBO.CPK'], 'jp103')], True),
+    'xbox-prompts-jp-1.04.dcpx': (['jp104', 'jp100'], [(['ROBO_PATCH.CPK', 'ROBO.CPK'], 'jp104')], True),
+    'xbox-prompts-asia-1.00.dcpx': (['asia100'], [(['ROBO_CN.CPK'], 'cn'), (['ROBO_TW.CPK', 'ROBO_CN.CPK'], 'tw')], True),
+}
+
+
+class Archives:
+    """The archives of the packages under a folder, read on demand."""
+
+    def __init__(self, root):
+        self.root, self.open, self.cache = Path(root), {}, {}
+
+    def path(self, folders, name):
+        return next((self.root / f / name for f in folders if (self.root / f / name).is_file()), None)
+
+    def entry(self, path, name):
+        """The entry's bytes, or None when the archive does not hold it."""
+        key = (str(path), name.lower())
+        if key not in self.cache:
+            if path not in self.open:
+                self.open[path] = cpk.Cpk(path)
+            found = [e for e in self.open[path].entries if e['path'].lower() == name.lower()]
+            self.cache[key] = self.open[path].read(found[0]) if found else None
+        return self.cache[key]
+
+    def names(self, path):
+        if path not in self.open:
+            self.open[path] = cpk.Cpk(path)
+        return [e['path'] for e in self.open[path].entries]
+
+
+def english_templates(archives, work):
+    path = archives.path(['usa100', 'eu100'], 'ROBO_US.CPK')
+    if path is None:
+        return None
+    pages = [page_rgb(archives.entry(path, f'Manual/Manual{n}.ftx')) for n in ('05', '06')]
+    return make_templates(pages[0], pages[1], work)
+
+
+def check_archive_patch(archives, patch, templates):
+    folders, views, aligned = ARCHIVE_BUILDS[patch]
+    key = patch.replace('xbox-prompts-', '').replace('.dcpx', '')
+    targets = read_patch(PROMPTS / patch)
+    names = sorted({t['archive'] for t in targets} | {a for stack, _ in views for a in stack})
+    paths = {name: archives.path(folders, name) for name in names}
+    missing = [name for name, path in paths.items() if path is None]
+    if missing:
+        print(f'skipped {key}: no {", ".join(missing)} under {archives.root} ({", ".join(folders)})')
+        return False
+    # The patch applied to the original archives: each target once per archive, the original before, the recorded
+    # result after, and runs only inside the texture it repaints.
+    listed = [(t['archive'].lower(), t['name'].lower()) for t in targets]
+    check(len(listed) == len(set(listed)), f'{key}: an entry is listed twice for an archive')
+    results = {}
+    for t in targets:
+        where = f"{key}: {t['archive']} {t['name']}"
+        original = archives.entry(paths[t['archive']], t['name'])
+        check(original is not None, f'{where} is not in the archive')
+        if original is None:
             continue
-        roots[version] = root
-        check_atlas(root, version, version)
-        check_button_parts(root, version, version)
-        if version == '100':
-            check_manual(root, templates, version)
-    if set(roots) == {'100', '102'}:
-        check_semantics(roots)
+        check(len(original) == t['size'] and zlib.crc32(original) == t['before'], f'{where} is not the original file')
+        result = apply_target(t, original)
+        check(zlib.crc32(result) == t['after'], f'{where}: the result does not match its recorded CRC32')
+        textures = ftex.textures(original)
+        texture = next(x for x in textures if x['name'] == (ATLAS if 'interface' in t['name'].lower() else textures[0]['name']))
+        inside = all(texture['data'] <= o and o + 16 <= texture['data'] + texture['size'] and o % 16 == 0 for o, _ in t['runs'])
+        check(inside, f'{where}: the patch writes outside the texture it repaints')
+        results[(t['archive'].lower(), t['name'].lower())] = (original, result)
+    summary = {}
+    for t in targets:
+        summary.setdefault(t['archive'], []).append(t['name'].split('/')[-1])
+    print(f'prompt art {key}: ' + '; '.join(f'{a}: {", ".join(n)}' for a, n in summary.items()))
+
+    pages_checked = icons = 0
+    for stack, layout in views:
+        view = f'{key} {stack[0]}'
+
+        def visible(entry):
+            """(archive, bytes) of the entry the build reads: the first archive of the stack that holds it."""
+            for a in stack:
+                data = archives.entry(paths[a], entry)
+                if data is not None:
+                    return a, data
+            return None, None
+
+        atlas_archive, atlas_blob = visible('GUI/Interface.ftx')
+        _, mbs = visible('GUI/Interface.mbs')
+        patched = results.get((atlas_archive.lower(), 'gui/interface.ftx'))
+        check(patched is not None, f'{view}: the atlas the build reads ({atlas_archive}) is not patched')
+        if patched:
+            uv = draw_xbox.quads(mbs)
+            before, after = decode_bytes(patched[0]), decode_bytes(patched[1])
+            check_symbols(before, uv, layout, view)
+            check_atlas_images(before, after, uv, layout, view)
+            check_button_part_images(Layout(mbs), before, after, view)
+        if templates is None:
+            print(f'prompt art {view}: manual not checked (no English pages: ROBO_US.CPK under usa100 or eu100)')
+            continue
+        pages = sorted({n.split('/')[-1] for a in stack for n in archives.names(paths[a])
+                        if n.lower().startswith('manual/manual') and n.lower().endswith('.ftx')})
+        for page in pages:
+            owner, blob = visible(f'Manual/{page}')
+            before = page_rgb(blob)
+            found = icons_on(before, templates, aligned)
+            patched_page = results.get((owner.lower(), f'manual/{page}'.lower()))
+            if not found:
+                check(patched_page is None, f'{view}: {owner} {page} shows no PlayStation icon yet is patched')
+                continue
+            check(patched_page is not None, f'{view}: {owner} {page} shows {len(found)} PlayStation icon(s) and is not patched')
+            if patched_page:
+                icons += check_manual_page(f'{owner} {page}', before, page_rgb(patched_page[1]), templates, view, aligned)
+                pages_checked += 1
+    if templates is not None:
+        print(f'prompt art {key}: {pages_checked} manual pages read by the build, {icons} icons replaced, none left')
+    return True
+
+
+def main():
+    args = sys.argv[1:]
+    archive_root = os.environ.get('TSR_PROMPT_ARCHIVES')
+    if '--archives' in args:
+        i = args.index('--archives')
+        archive_root = args[i + 1]
+        del args[i:i + 2]
+    folder = Path(args[0]) if args else None
+    ran = False
+    import tempfile
+    if folder and (folder / 'templates').is_dir() and (folder / '100').is_dir():
+        ran = True
+        with tempfile.TemporaryDirectory() as work:
+            pages = [page_rgb((folder / 'templates' / name).read_bytes()) for name in ('Manual_Manual05.ftx', 'Manual_Manual06.ftx')]
+            templates = make_templates(pages[0], pages[1], Path(work))
+        roots = {}
+        for version in ('100', '102'):
+            root = folder / version
+            if not root.is_dir():
+                print(f'skipped: no exported entries for {version}')
+                continue
+            roots[version] = root
+            check_atlas(root, version, version)
+            check_button_parts(root, version, version)
+            if version == '100':
+                check_manual(root, templates, version)
+        if set(roots) == {'100', '102'}:
+            check_semantics(roots)
+    if archive_root and Path(archive_root).is_dir():
+        archives = Archives(archive_root)
+        with tempfile.TemporaryDirectory() as work:
+            templates = english_templates(archives, Path(work))
+        for patch in ARCHIVE_BUILDS:
+            ran |= check_archive_patch(archives, patch, templates)
+    if not ran:
+        print('skipped: no exported entries (run the Packages group with TSR_TEST_PACKAGES set first) and no archives '
+              '(--archives or TSR_PROMPT_ARCHIVES)')
+        return 2
     print(f'prompt art: {checks} checks, {failures} failed')
     return 1 if failures else 0
 

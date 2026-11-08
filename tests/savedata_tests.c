@@ -381,6 +381,40 @@ static void test_game_paths_read_only(void) {
 }
 
 /* The user's save, copied: mounted read-only, opened and read the way the game loads it. */
+/* The prologue demo's save, offered by the Japanese and Asian games: found and read-only when present, else not found. */
+static void test_transferring_mount(void) {
+    typedef int32_t (ABI *TransferFn)(const TransferringMount *, MountResult *);
+    const TransferFn transfer = (TransferFn)save_export("sceSaveDataTransferringMount");
+    TitleId demo; memset(&demo, 0, sizeof(demo)); memcpy(demo.data, "CUSA17627", 9);
+    DirName dir = dir_name("SAVEDATA00");
+    TransferringMount m; memset(&m, 0, sizeof(m));
+    m.user = 1; m.title = &demo; m.dir = &dir;
+    MountResult r;
+    CHECK(transfer(&m, &r) == ERR_NOT_FOUND);
+    char demo_dir[900];
+    snprintf(demo_dir, sizeof(demo_dir), "%s/savedata/1/CUSA17627/SAVEDATA00", user_root);
+    CHECK(make_dirs(demo_dir) == 0);
+    char demo_file[960];
+    snprintf(demo_file, sizeof(demo_file), "%s/ROBO13.DAT", demo_dir);
+    FILE *f = fopen(demo_file, "wb");
+    if (f) { fputs("demo", f); fclose(f); }
+    CHECK(transfer(&m, &r) == 0 && r.status == 0);
+    char back[8] = {0};
+    char guest[64]; snprintf(guest, sizeof(guest), "%s/ROBO13.DAT", r.point.data);
+    const int64_t fd = api.open(guest, GUEST_RDONLY, 0);
+    CHECK(fd >= 3 && api.read((int)fd, back, 4) == 4 && !memcmp(back, "demo", 4));
+    if (fd >= 3) api.close((int)fd);
+    CHECK(api.open(guest, GUEST_WRONLY | GUEST_TRUNC, 0) < 0);
+    CHECK(api.umount(&r.point) == 0);
+    CHECK(exists(demo_file) && host_size(demo_file) == 4);
+    m.title = NULL;
+    CHECK(transfer(&m, &r) == ERR_PARAMETER);
+    TitleId escape; memset(&escape, 0, sizeof(escape)); memcpy(escape.data, "../x", 4);
+    m.title = &escape;
+    CHECK(transfer(&m, &r) == ERR_PARAMETER);
+    CHECK(transfer(NULL, &r) == ERR_PARAMETER);
+}
+
 static void test_user_save_copy(const char *repo) {
     char original[1100], original_meta[1100];
     snprintf(original, sizeof(original), "%s/user/savedata/1/CUSA19610/SAVEDATA00/ROBO13.DAT", repo);
@@ -458,6 +492,7 @@ int main(void) {
     test_search_and_delete();
     test_save_memory();
     test_game_paths_read_only();
+    test_transferring_mount();
     test_user_save_copy(TSR_SOURCE_DIR);
 
     wipe(test_root);

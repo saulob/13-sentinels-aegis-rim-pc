@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// The game window's title: the game's title, then the render resolution and the frame rate when they are shown.
+// The game window's title: the game's title and the running build, then the render resolution and the frame rate when
+// they are shown.
 #pragma once
 
 #include <cstdio>
@@ -16,6 +17,16 @@ struct Content {
     double fps = -1.0; ///< negative until measured
     std::string_view entry{}; ///< text being typed; it takes the place of the frame rate
 };
+
+/// The part that stays for the whole run: "13 Sentinels: Aegis Rim | CUSA10602 1.00".
+inline std::string Base(std::string_view game, std::string_view build) {
+    std::string base{game};
+    if (!build.empty()) {
+        base += " | ";
+        base += build;
+    }
+    return base;
+}
 
 inline std::string Compose(const Content& content) {
     std::string title{content.base};

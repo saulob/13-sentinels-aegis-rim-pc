@@ -59,10 +59,21 @@ def load_templates(folder):
     return out
 
 
-def classify(kind, gray_patch, templates):
+def classify(kind, gray_patch, templates, aligned=False):
+    """The template the patch matches closely, or None. `aligned` also compares, unscaled, every window of the template's
+    size inside a larger patch (a pill drawn a pixel wider than the template), with the same thresholds."""
     size = CIRCLE_SIZE if kind == 'circle' else PILL_SIZE
     probe = normalised(gray_patch, size)
-    ranked = sorted(((correlate(probe, t), name) for name, t in templates[kind].items()), reverse=True)
+    scores = {name: correlate(probe, t) for name, t in templates[kind].items()}
+    if aligned:
+        w, h = size
+        for dy in range(gray_patch.shape[0] - h + 1):
+            for dx in range(gray_patch.shape[1] - w + 1):
+                window = gray_patch[dy:dy + h, dx:dx + w].astype(np.float32)
+                window = (window - window.mean()) / (window.std() + 1e-6)
+                for name, t in templates[kind].items():
+                    scores[name] = max(scores[name], correlate(window, t))
+    ranked = sorted(((score, name) for name, score in scores.items()), reverse=True)
     if not ranked or ranked[0][0] < MIN_SCORE:
         return None
     if len(ranked) > 1 and ranked[0][0] - ranked[1][0] < MIN_MARGIN:
@@ -110,14 +121,14 @@ def draw_pill(img, box, comp, text, font):
     img[y0:y1, x0:x1] = np.array(base.convert('RGB'))
 
 
-def paint(img, templates, font):
+def paint(img, templates, font, aligned=False):
     original = img.copy()
     done = []
     gray = original.mean(-1)
     for kind, s, comp in list(candidates(original)):
         box = (s[1].start, s[0].start, s[1].stop, s[0].stop)
         patch = gray[s[0], s[1]]
-        name = classify(kind, patch, templates)
+        name = classify(kind, patch, templates, aligned)
         if name is None:
             continue
         if kind == 'circle':
@@ -134,12 +145,13 @@ def main():
     ap.add_argument('page')
     ap.add_argument('out')
     ap.add_argument('--font', required=True)
+    ap.add_argument('--aligned', action='store_true', help='also match pills a pixel wider than the templates')
     args = ap.parse_args()
     original = np.array(Image.open(args.page).convert('RGB'))
     if original.shape[:2] != (1080, 1920):
         raise SystemExit('expected a 1920x1080 page')
     edited = original.copy()
-    done = paint(edited, load_templates(args.templates), args.font)
+    done = paint(edited, load_templates(args.templates), args.font, args.aligned)
     changed = (edited != original).any(-1)
     out = Path(args.out)
     Image.fromarray(edited).save(out)

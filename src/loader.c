@@ -563,8 +563,12 @@ int main(int argc, char **argv) {
         tsr_game_build_problem(paths.image_dir,problem,sizeof(problem));
         printf("TSR: %s; Render resolution, Skip Intro and Exit Game stay off and the game code is unchanged\n",problem);
     }
-    char build_key[64]="";
-    if (known_build) snprintf(build_key,sizeof(build_key),"%s-%s",game_build.title_id,game_build.version);
+    char build_key[64]="", code_key[64]="";
+    if (known_build) {
+        snprintf(build_key,sizeof(build_key),"%s-%s",game_build.title_id,game_build.version);
+        snprintf(code_key,sizeof(code_key),"%s",game_build.code_key && *game_build.code_key ? game_build.code_key : build_key);
+        printf("TSR: region %s, %s, executable code of %s\n",game_build.region,build_key,code_key);
+    }
     const char *pinned_build=getenv("TSR_GAME_BUILD");
     if (pinned_build && *pinned_build) {
         if (strcmp(pinned_build,build_key)) {
@@ -597,8 +601,10 @@ int main(int argc, char **argv) {
         runtime_file_configure(app0, user_dir ? user_dir : "user");
         char sfo[4096], id[16]="";
         snprintf(sfo,sizeof(sfo),"%s/sce_sys/param.sfo",app0);
-        if (sfo_value(sfo,"INSTALL_DIR_SAVEDATA",id,sizeof(id),NULL) || sfo_value(sfo,"TITLE_ID",id,sizeof(id),NULL))
+        if (sfo_value(sfo,"INSTALL_DIR_SAVEDATA",id,sizeof(id),NULL) || sfo_value(sfo,"TITLE_ID",id,sizeof(id),NULL)) {
             runtime_savedata_configure(id);
+            printf("Save data: title %s (each region keeps its own saves)\n",id);
+        }
         trophy_runtime_configure(app0, user_dir ? user_dir : "user");
     }
     tsrgpu_register_kernel();
@@ -727,17 +733,22 @@ int main(int argc, char **argv) {
     }
     if (!cpu_only && !tsrgpu_available()) puts("GPU: no video core in this build; running CPU-side only");
     else if (!cpu_only) {
-        char title[128]="13 Sentinels: Aegis Rim", serial[16]="UNKNOWN", sfo[4096];
+        char serial[16]="UNKNOWN", sfo[4096];
         uint32_t attributes=0;
         snprintf(sfo,sizeof(sfo),"%s/sce_sys/param.sfo",app0 ? app0 : ".");
-        sfo_value(sfo,"TITLE",title,sizeof(title),NULL);
         sfo_value(sfo,"TITLE_ID",serial,sizeof(serial),NULL);
         sfo_value(sfo,"ATTRIBUTE",NULL,0,&attributes);
         uint64_t sdk=0;
         if (procparam) memcpy(&sdk,image+procparam+16,8); /* procparam: size, magic, count, sdk_version */
         uint32_t features=0;
         if (known_build && game_build.resolution_site_count) features|=TSR_GPU_FEATURE_RENDER_RESOLUTION;
-        TsrGpuConfig gpu={title,serial,user_dir,settings_file,(uint32_t)sdk,attributes,1920,1080,features};
+        char running[48], app_ver[16]="";
+        if (known_build) snprintf(running,sizeof(running),"%s %s",game_build.title_id,game_build.version);
+        else {
+            sfo_value(sfo,"APP_VER",app_ver,sizeof(app_ver),NULL);
+            snprintf(running,sizeof(running),"%s %s",serial,app_ver[0]=='0' && app_ver[1] ? app_ver+1 : app_ver);
+        }
+        TsrGpuConfig gpu={TSR_WINDOW_TITLE,running,serial,user_dir,settings_file,(uint32_t)sdk,attributes,1920,1080,features};
         gpu_enabled=1; /* page tracking starts while the rasterizer registers guest memory */
         if (tsrgpu_init(&gpu)) fail("GPU initialization failed");
         printf("GPU: window and presenter ready; SDK 0x%08x, %u HLE symbols\n",(unsigned)sdk,tsrgpu_symbol_count());
@@ -821,9 +832,9 @@ int main(int argc, char **argv) {
                      lzcnt_compat_status_text(status));
             fail_running(message);
         }
-        printf("LZCNT: rewritten at %zu sites (%s)\n",rewritten->count,rewritten->build);
+        printf("LZCNT: rewritten at %zu sites (executable code of %s)\n",rewritten->count,rewritten->build);
     }
-    const char *verified_build=known_build ? build_key : NULL;
+    const char *verified_build=known_build ? code_key : NULL;
     if (skip_intro_wanted)
         skip_intro_install(image,size,entry,verified_build,hook_stubs,skip_intro_stub_bytes());
     else puts("Skip Intro: off");

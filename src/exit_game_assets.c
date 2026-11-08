@@ -54,7 +54,7 @@ static uint32_t u32_at(const uint8_t *p) {
     return (uint32_t)p[0] | (uint32_t)p[1] << 8 | (uint32_t)p[2] << 16 | (uint32_t)p[3] << 24;
 }
 
-static uint32_t section_size(const ExitGameLabels *l, uint32_t section) {
+static uint32_t section_size(const ExitGameLayout *l, uint32_t section) {
     uint32_t end = l->layout_size;
     for (int k = 0; k < EXIT_GAME_LAYOUT_SECTIONS; ++k)
         if (l->sections[k] > l->sections[section] && l->sections[k] < end) end = l->sections[k];
@@ -75,19 +75,11 @@ static int parse_region(Reader *r, const ExitGameLabels *l, ExitGameRegion *g) {
     return blocks == (uint64_t)g->bw * g->bh;
 }
 
-static int parse_language(Reader *r, ExitGameLabels *l) {
-    const uint8_t *key;
-    if (!take(r, 12, &key)) return 0;
-    memcpy(l->key, key, 12);
-    l->key[12] = 0;
-    if (!u32(r, &l->width) || !u32(r, &l->height) || !u32(r, &l->pitch) || !u32(r, &l->data_size)) return 0;
-    if (l->width % 32 || l->height % 32 || l->pitch < l->width || (uint64_t)l->pitch * l->height != l->data_size) return 0;
-    for (int i = 0; i < 4; ++i)
-        if (!u32(r, &l->reference[i])) return 0;
-    if (!u32(r, &l->reference_crc) || !u32(r, &l->region_count) || !l->region_count || l->region_count > EXIT_GAME_MAX_REGIONS) return 0;
-    if (l->reference[0] + l->reference[2] > l->width / 4 || l->reference[1] + l->reference[3] > l->height / 4) return 0;
-    for (uint32_t i = 0; i < l->region_count; ++i)
-        if (!parse_region(r, l, &l->regions[i])) return 0;
+static int parse_layout(Reader *r, ExitGameLayout *l) {
+    const uint8_t *tag;
+    if (!take(r, 12, &tag)) return 0;
+    memcpy(l->tag, tag, 12);
+    l->tag[12] = 0;
     for (int k = 0; k < EXIT_GAME_LAYOUT_SECTIONS; ++k)
         if (!u32(r, &l->sections[k])) return 0;
     if (!u32(r, &l->layout_size)) return 0;
@@ -105,9 +97,28 @@ static int parse_language(Reader *r, ExitGameLabels *l) {
     return 1;
 }
 
+static int parse_language(Reader *r, ExitGameLabels *l) {
+    const uint8_t *key;
+    if (!take(r, 12, &key)) return 0;
+    memcpy(l->key, key, 12);
+    l->key[12] = 0;
+    if (!u32(r, &l->width) || !u32(r, &l->height) || !u32(r, &l->pitch) || !u32(r, &l->data_size)) return 0;
+    if (l->width % 32 || l->height % 32 || l->pitch < l->width || (uint64_t)l->pitch * l->height != l->data_size) return 0;
+    for (int i = 0; i < 4; ++i)
+        if (!u32(r, &l->reference[i])) return 0;
+    if (!u32(r, &l->reference_crc) || !u32(r, &l->region_count) || !l->region_count || l->region_count > EXIT_GAME_MAX_REGIONS) return 0;
+    if (l->reference[0] + l->reference[2] > l->width / 4 || l->reference[1] + l->reference[3] > l->height / 4) return 0;
+    for (uint32_t i = 0; i < l->region_count; ++i)
+        if (!parse_region(r, l, &l->regions[i])) return 0;
+    if (!u32(r, &l->layout_count) || !l->layout_count || l->layout_count > EXIT_GAME_MAX_LAYOUTS) return 0;
+    for (uint32_t i = 0; i < l->layout_count; ++i)
+        if (!parse_layout(r, &l->layouts[i])) return 0;
+    return 1;
+}
+
 int exit_game_asset_parse(const uint8_t *data, size_t size, ExitGameAsset *out) {
     memset(out, 0, sizeof(*out));
-    if (!data || size < 16 || memcmp(data, "TSRXGL01", 8)) return 0;
+    if (!data || size < 16 || memcmp(data, "TSRXGL02", 8)) return 0;
     if (exit_game_crc32(data, size - 4) != u32_at(data + size - 4)) return 0;
     Reader r = {data + 8, data + size - 4};
     if (!u32(&r, &out->count) || !out->count || out->count > EXIT_GAME_MAX_LANGUAGES) return 0;
@@ -166,8 +177,7 @@ ExitGamePatchStatus exit_game_texture_patch(const ExitGameLabels *l, uint32_t wi
     return EXIT_GAME_PATCHED;
 }
 
-ExitGamePatchStatus exit_game_layout_patch(const ExitGameLabels *l, uint8_t *layout) {
-    if (!layout) return EXIT_GAME_OTHER;
+static ExitGamePatchStatus layout_patch(const ExitGameLayout *l, uint8_t *layout) {
     for (int k = 0; k < EXIT_GAME_LAYOUT_SECTIONS; ++k) {
         uint64_t pointer;
         memcpy(&pointer, layout + LAYOUT_SECTION_TABLE + 8 * k, sizeof(pointer));
@@ -191,4 +201,17 @@ ExitGamePatchStatus exit_game_layout_patch(const ExitGameLabels *l, uint8_t *lay
         e += 8 + 2 * length;
     }
     return EXIT_GAME_PATCHED;
+}
+
+ExitGamePatchStatus exit_game_layout_patch(const ExitGameLabels *l, uint8_t *layout, int *which) {
+    ExitGamePatchStatus result = EXIT_GAME_OTHER;
+    if (which) *which = -1;
+    for (uint32_t i = 0; layout && i < l->layout_count; ++i) {
+        const ExitGamePatchStatus status = layout_patch(&l->layouts[i], layout);
+        if (status == EXIT_GAME_OTHER) continue;
+        if (which && (status != EXIT_GAME_MISMATCH || result == EXIT_GAME_OTHER)) *which = (int)i;
+        if (status != EXIT_GAME_MISMATCH) return status;
+        result = EXIT_GAME_MISMATCH;
+    }
+    return result;
 }

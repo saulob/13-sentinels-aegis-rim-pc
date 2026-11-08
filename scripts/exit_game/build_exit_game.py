@@ -1,14 +1,17 @@
 #!/usr/bin/env python3
-"""Builds assets/exit_game/title-labels.bin: the Exit Game row of the title menu for the five text languages.
+"""Builds assets/exit_game/title-labels.bin: the Exit Game row of the title menu for every text language.
 
 The title already has a third menu row (the unused EXTRA row of the three-row parts *_P00/*_P01). For each language
 this makes the row's label (EXIT GAME, QUITTER LE JEU, SPIEL BEENDEN, ESCI DAL GIOCO, SALIR DEL JUEGO) from the title's
 own letters, draws it into space of the text atlas no sprite samples, and records the layout edits that point the third
 row at it, including the frames of its selection write-on; where a language's three-row parts still show English
-placeholder rows they are pointed back at the language's own rows. The game applies the result in memory
-(src/exit_game.c), checking every byte it rewrites first.
+placeholder rows they are pointed back at the language's own rows. The Japanese and Chinese titles have English rows
+in their own atlas arrangement; Japanese has one atlas for two layouts (the base game's and the updates'). The game
+applies the result in memory (src/exit_game.c), checking every byte it rewrites first.
 
-    build_exit_game.py <folder with ROBO_US/FR/GE/IT/SP.CPK> [--patch2 <1.02 folder>] [--out FILE] [--preview DIR] [--cache DIR]
+    build_exit_game.py <folder with ROBO_US/FR/GE/IT/SP.CPK> --patch2 <USA 1.02 folder>
+                       --japan <folder with ROBO.CPK> --japan-update <folder with ROBO_PATCH.CPK> [--japan-update ...]
+                       --asia <folder with ROBO_CN/TW.CPK> [--out FILE] [--preview DIR] [--cache DIR]
 """
 import argparse
 import io
@@ -35,13 +38,20 @@ TEXT_ATLAS = '4K_title_arranged043.gnf'
 TEXT_TEXTURE = 4
 PX_PER_UNIT = 5.0
 THREE_ROW = ['NEW_GAME_P00', 'LOAD_GAME_P00', 'EXTRA_GAME_P00', 'NEW_GAME_P01', 'LOAD_GAME_P01', 'EXTRA_GAME_P01']
-MAGIC = b'TSRXGL01'
+MAGIC = b'TSRXGL02'
+ENGLISH_ROWS = {211: (lb.BOLD, 'EXTRA'), 212: (lb.BOLD, 'GAME'), 213: (lb.BOLD, 'NEW'), 214: (lb.BOLD, 'LOAD'),
+                215: (lb.BOLD, 'PRESS ANY BUTTON'), 216: (lb.PLATE_THIN, 'PRESS ANY BUTTON'),
+                199: (lb.THIN, 'GAME'), 200: (lb.THIN, 'NEW'), 201: (lb.THIN, 'LOAD'), 202: (lb.THIN, 'EXTRA')}
+
+
+def english_rows(shift=0):
+    """The English rows of a layout whose UV quads sit `shift` places from the USA layout's."""
+    return {uv + shift: src for uv, src in ENGLISH_ROWS.items()}
+
 
 # key, archive suffix, label, text of the source rows by UV quad
 LANGUAGES = [
-    ('english', 'US', 'EXIT', {211: (lb.BOLD, 'EXTRA'), 212: (lb.BOLD, 'GAME'), 213: (lb.BOLD, 'NEW'), 214: (lb.BOLD, 'LOAD'),
-                               215: (lb.BOLD, 'PRESS ANY BUTTON'), 216: (lb.PLATE_THIN, 'PRESS ANY BUTTON'),
-                               199: (lb.THIN, 'GAME'), 200: (lb.THIN, 'NEW'), 201: (lb.THIN, 'LOAD'), 202: (lb.THIN, 'EXTRA')}),
+    ('english', 'US', 'EXIT', english_rows()),
     ('french', 'FR', 'QUITTER LE JEU', {212: (lb.BOLD, 'NOUVELLE PARTIE'), 213: (lb.BOLD, 'CHARGER PARTIE'),
                                         214: (lb.BOLD, 'APPUIE SUR UNE TOUCHE'), 215: (lb.PLATE_THIN, 'APPUIE SUR UNE TOUCHE'),
                                         199: (lb.THIN, 'NOUVELLE PARTIE'), 200: (lb.THIN, 'CHARGER PARTIE')}),
@@ -61,28 +71,73 @@ def entry(cpk, name):
     return cpk.read(next(e for e in cpk.entries if e['path'].lower() == name))
 
 
+def has_entry(cpk, name):
+    return any(e['path'].lower() == name for e in cpk.entries)
+
+
+def title_files(cache, name, read):
+    """(title.ftx, its layouts, the decoded text atlas), read once and kept in the cache folder."""
+    cached = Path(cache) / f'{name}.npz' if cache else None
+    if cached and cached.exists():
+        z = np.load(cached)
+        return z['ftx'].tobytes(), [z[f'mbs{i}'].tobytes() for i in range(int(z['layouts']))], z['rgba']
+    ftx, layouts = read()
+    rgba = np.array(ftex.decode(ftx, next(t for t in ftex.textures(ftx) if t['name'] == TEXT_ATLAS)))
+    if cached:
+        cached.parent.mkdir(parents=True, exist_ok=True)
+        np.savez(cached, ftx=np.frombuffer(ftx, np.uint8), rgba=rgba, layouts=len(layouts),
+                 **{f'mbs{i}': np.frombuffer(m, np.uint8) for i, m in enumerate(layouts)})
+    return ftx, layouts, rgba
+
+
+def usa_title(folder, patch2, key, suffix):
+    def read():
+        cpk = Cpk(Path(folder) / f'ROBO_{suffix}.CPK')
+        ftx, mbs = entry(cpk, 'gui/title.ftx'), entry(cpk, 'gui/title.mbs')
+        if patch2:
+            other = entry(Cpk(Path(patch2) / f'ROBO_PATCH2_{suffix}.CPK'), 'gui/title.mbs')
+            assert other[0x100:] == mbs[0x100:], f'{key}: the 1.02 title layout differs beyond its header'
+        return ftx, [mbs]
+    return read
+
+
+def japan_title(folder, updates):
+    """The base game's atlas and layout, and the layout the updates replace it with (one for all of them)."""
+    def read():
+        cpk = Cpk(Path(folder) / 'ROBO.CPK')
+        ftx, base = entry(cpk, 'gui/title.ftx'), entry(cpk, 'gui/title.mbs')
+        layouts = []
+        for u in updates:
+            patch = Cpk(Path(u) / 'ROBO_PATCH.CPK')
+            assert not has_entry(patch, 'gui/title.ftx'), f'{u}: the update replaces the title atlas'
+            layouts.append(entry(patch, 'gui/title.mbs'))
+        assert all(m[0x100:] == layouts[0][0x100:] for m in layouts), 'the updates\' title layouts differ beyond their headers'
+        assert layouts[0][0x100:] != base[0x100:]
+        return ftx, [base, layouts[0]]
+    return read
+
+
+def asia_title(folder, suffix):
+    def read():
+        cpk = Cpk(Path(folder) / f'ROBO_{suffix}.CPK')
+        return entry(cpk, 'gui/title.ftx'), [entry(cpk, 'gui/title.mbs')]
+    return read
+
+
 class Language:
-    def __init__(self, key, suffix, label, sources, folder, patch2, cache):
-        self.key, self.label, self.sources = key, label, sources
-        cached = Path(cache) / f'{key}.npz' if cache else None
-        if cached and cached.exists():
-            z = np.load(cached)
-            self.ftx, mbs, self.rgba = z['ftx'].tobytes(), z['mbs'].tobytes(), z['rgba']
-        else:
-            cpk = Cpk(Path(folder) / f'ROBO_{suffix}.CPK')
-            self.ftx, mbs = entry(cpk, 'gui/title.ftx'), entry(cpk, 'gui/title.mbs')
-            if patch2:
-                other = entry(Cpk(Path(patch2) / f'ROBO_PATCH2_{suffix}.CPK'), 'gui/title.mbs')
-                assert other[0x100:] == mbs[0x100:], f'{key}: the 1.02 title layout differs beyond its header'
+    """One text atlas with one of its layouts. `joined`: the rows read WORD GAME, the label is set as such."""
+
+    def __init__(self, key, label, sources, ftx, mbs, rgba, tag='', joined=False):
+        self.key, self.label, self.sources, self.tag, self.joined = key, label, sources, tag, joined
+        self.ftx, self.rgba = ftx, rgba
         self.layout = tl.Layout(mbs)
         self.tex = next(t for t in ftex.textures(self.ftx) if t['name'] == TEXT_ATLAS)
-        if not (cached and cached.exists()):
-            self.rgba = np.array(ftex.decode(self.ftx, self.tex))
-            if cached:
-                cached.parent.mkdir(parents=True, exist_ok=True)
-                np.savez(cached, ftx=np.frombuffer(self.ftx, np.uint8), mbs=np.frombuffer(mbs, np.uint8), rgba=self.rgba)
         self.W, self.H = self.tex['width'], self.tex['height']
         self.segments = {}
+
+    @property
+    def name(self):
+        return f'{self.key} ({self.tag} layout)' if self.tag else self.key
 
     def uv_rect(self, uv):
         u0, v0, u1, v1 = self.layout.bounds(tl.UVS, uv)
@@ -165,6 +220,20 @@ def build_pools(langs):
     return pools, own
 
 
+def own_letters(lang, pools, own):
+    """The letters of a language outside the pools (Japanese, Chinese): taken first for its label, spaced as the pools."""
+    for uv, (kind, text) in lang.sources.items():
+        style = lb.BOLD if kind == lb.BOLD else lb.THIN
+        ink = lb.THIN if kind == lb.THIN else lb.BOLD
+        seg = lb.segment(lang.crop(uv), ink, text, f'{lang.key} uv{uv}')
+        if seg is None:
+            seg = lb.segment(lang.crop(uv), ink, text, f'{lang.key} uv{uv}', {c: g.width - 4 for c, g in pools[style].glyphs.items()})
+        assert seg is not None, (lang.name, uv, text)
+        lang.segments[uv] = seg
+        for g in seg['glyphs']:
+            own.setdefault((lang.key, style, g.ch), g)
+
+
 def pool_for(pools, own, lang, style, text):
     """The style's pool with the language's own letters first, and J from U as no atlas has a J."""
     pool = lb.Pool(style)
@@ -216,9 +285,9 @@ def used_texels(lang):
     return used
 
 
-def place(lang, images):
+def place(lang, used, images):
     """Block-aligned top-left corners for the images, stacked in a rectangle no sprite samples."""
-    S = np.pad(used_texels(lang).cumsum(0).cumsum(1), ((1, 0), (1, 0)))
+    S = np.pad(used.cumsum(0).cumsum(1), ((1, 0), (1, 0)))
     w = (max(i.shape[1] for i in images) + 3) // 4 * 4
     h = sum((i.shape[0] + 3) // 4 * 4 + 8 for i in images)
     for y in range(0, lang.H - h + 1, 4):
@@ -337,7 +406,8 @@ def check_only_three_row(lay, quads):
             assert not (hit and i in drawn_elsewhere), (sec, q, i)
 
 
-def plan(lang, pools, own):
+def label_art(lang, pools, own):
+    """The label of one layout of a language: its art and where the third row draws it."""
     lay = lang.layout
     geo = geometry(lay)
     rhythm = native_rhythm(lang, lay)
@@ -346,7 +416,7 @@ def plan(lang, pools, own):
     main_r = lay.bounds(tl.POSITIONS, row2['main']['pos'])
     shadow_r = lay.bounds(tl.POSITIONS, row2['shadow']['pos'])
     plate_r = lay.bounds(tl.POSITIONS, plate['pos'])
-    if lang.key == 'english':
+    if lang.joined:
         game_uv = next(uv for uv in geo['rows'][1] if lang.text(uv) == 'GAME')
         game_plate = next(s for s in geo['plates'][1] if lang.text(s['uv']) == 'GAME')
         bold, bx0 = join_with_game(bold, lang.crop(game_plate['uv']), plate_r, lay.bounds(tl.POSITIONS, game_plate['pos']))
@@ -359,7 +429,19 @@ def plan(lang, pools, own):
     main3 = (tx0, main_r[1] + p, tx0 + thin.shape[1] / PX_PER_UNIT, main_r[3] + p)
     dx, dy = shadow_r[0] - main_r[0], shadow_r[1] - main_r[1]
     shadow3 = (main3[0] + dx, main3[1] + dy, main3[2] + dx, main3[3] + dy)
-    (bpos, tpos) = place(lang, [bold, thin])
+    return dict(geo=geo, rhythm=rhythm, bold=bold, thin=thin, plate=plate, rects=(plate3, main3, shadow3),
+                reference=lang.uv_rect(plate['uv']))
+
+
+def plan(variants, pools, own):
+    """The label of one text atlas, drawn once into space none of its layouts samples, and each layout's edits."""
+    lang = variants[0]
+    arts = [label_art(v, pools, own) for v in variants]
+    bold, thin, ref = arts[0]['bold'], arts[0]['thin'], arts[0]['reference']
+    for v, a in zip(variants[1:], arts[1:]):
+        assert np.array_equal(a['bold'], bold) and np.array_equal(a['thin'], thin) and a['reference'] == ref, v.name
+    used = np.logical_or.reduce([used_texels(v) for v in variants])
+    (bpos, tpos) = place(lang, used, [bold, thin])
     bold_rect = (bpos[0], bpos[1], bpos[0] + bold.shape[1], bpos[1] + bold.shape[0])
     thin_rect = (tpos[0], tpos[1], tpos[0] + thin.shape[1], tpos[1] + thin.shape[0])
     atlas = lang.rgba.copy()
@@ -367,11 +449,13 @@ def plan(lang, pools, own):
         atlas[y0 // 4 * 4:(y1 + 3) // 4 * 4, x0 // 4 * 4:(x1 + 3) // 4 * 4] = 0
         atlas[y0:y1, x0:x1] = img
     regions = [encode_region(lang, atlas, r) for r in (bold_rect, thin_rect)]
-    edit_layout(lang, geo, uv_points(lang, bold_rect), uv_points(lang, thin_rect), plate3, main3, shadow3, plate, bold, rhythm)
-    ref = lang.uv_rect(plate['uv'])
+    edits = []
+    for v, a in zip(variants, arts):
+        edit_layout(v, a['geo'], uv_points(v, bold_rect), uv_points(v, thin_rect), *a['rects'], a['plate'], bold, a['rhythm'])
+        edits.append(v.layout.byte_edits())
     ref_blocks = (ref[0] // 4, ref[1] // 4, (ref[2] - ref[0]) // 4, (ref[3] - ref[1]) // 4)
-    return dict(atlas=atlas, regions=regions, edits=lay.byte_edits(), reference=(ref_blocks, zlib.crc32(tiled_blocks(lang, ref_blocks))),
-                bold=bold, thin=thin, rects=(plate3, main3, shadow3), bold_rect=bold_rect, thin_rect=thin_rect)
+    return dict(atlas=atlas, regions=regions, edits=edits, reference=(ref_blocks, zlib.crc32(tiled_blocks(lang, ref_blocks))),
+                bold=bold, thin=thin, rects=[a['rects'] for a in arts], bold_rect=bold_rect, thin_rect=thin_rect)
 
 
 def edit_layout(lang, geo, bold_uv_pts, thin_uv_pts, plate3, main3, shadow3, plate2, bold, rhythm):
@@ -381,7 +465,7 @@ def edit_layout(lang, geo, bold_uv_pts, thin_uv_pts, plate3, main3, shadow3, pla
     plate_elements = sorted(set(layer_elements(lay, three[2], 1)) | set(layer_elements(lay, three[5], 1)))
     strokes = sorted({s['pos'] for e in plate_elements for s in lay.element_sprites(e) if s['kind'] != tl.TEXTURED})
     texts = [s for p in three for e in layer_elements(lay, p, 0) for s in textured(lay, e)]
-    if lang.key == 'english':
+    if lang.joined:
         row3 = [s for s in texts if geo['row'](s) == 2]
         (thin_uv,) = {s['uv'] for s in row3}
         (main_pos,) = {s['pos'] for s in row3 if s['colour'] != col['shadow']}
@@ -393,7 +477,7 @@ def edit_layout(lang, geo, bold_uv_pts, thin_uv_pts, plate3, main3, shadow3, pla
         own_uv = {uv for r in geo['rows'].values() for uv in r}
         placeholders = [s for s in texts if s['uv'] not in own_uv]
         uvs, poss = sorted({s['uv'] for s in placeholders}), sorted({s['pos'] for s in placeholders})
-        assert len(uvs) >= 2 and len(poss) >= 4, (lang.key, uvs, poss)
+        assert len(uvs) >= 2 and len(poss) >= 4, (lang.name, uvs, poss)
         thin_uv, bold_uv = uvs[:2]
         main_pos, shadow_pos, plate_pos, nowhere = poss[:4]
         info = {uv: next(s['info'] for s in placeholders if s['uv'] == uv) for uv in uvs}
@@ -401,14 +485,14 @@ def edit_layout(lang, geo, bold_uv_pts, thin_uv_pts, plate3, main3, shadow3, pla
         quads = [(tl.UVS, thin_uv), (tl.UVS, bold_uv), (tl.POSITIONS, main_pos), (tl.POSITIONS, shadow_pos),
                  (tl.POSITIONS, plate_pos), (tl.POSITIONS, nowhere)]
     check_only_three_row(lay, quads + [(tl.POSITIONS, q) for q in strokes])
-    assert not {q for s, q in quads if s == tl.POSITIONS} & set(strokes), lang.key
-    assert all(axis_aligned(lay, s, i) for s, i in quads), lang.key
+    assert not {q for s, q in quads if s == tl.POSITIONS} & set(strokes), lang.name
+    assert all(axis_aligned(lay, s, i) for s, i in quads), lang.name
     lay.set_quad(tl.UVS, thin_uv, thin_uv_pts)
     lay.set_quad(tl.UVS, bold_uv, bold_uv_pts)
     lay.set_quad(tl.POSITIONS, main_pos, tl.rect_points(*main3))
     lay.set_quad(tl.POSITIONS, shadow_pos, tl.rect_points(*shadow3))
     lay.set_quad(tl.POSITIONS, plate_pos, tl.rect_points(*plate3))
-    if lang.key != 'english':
+    if not lang.joined:
         lay.set_quad(tl.POSITIONS, nowhere, [(0.0, 0.0)] * 6)
         third = dict(main=(thin_uv, main_pos, col['main'], info[thin_uv]), shadow=(thin_uv, shadow_pos, col['shadow'], info[thin_uv]),
                      dim=(thin_uv, main_pos, col['dim'], info[thin_uv]))
@@ -489,11 +573,13 @@ def write_on(lay, frames, elements, quads, bold, plate3, rhythm, plate):
 
 
 def write_asset(path, results):
-    """TSRXGL01 (little endian): per language its key, the text atlas it fits, a CRC of reference blocks, the label
-    regions (block rect, CRC of the blocks replaced, a pool of BC7 blocks and runs of pool indices in row order), the
-    layout's section offsets and length, and its edits (section, length, offset in the section, original bytes, new bytes). A CRC32 of everything ends it."""
+    """TSRXGL02 (little endian): per language its key, the text atlas it fits, a CRC of reference blocks, the label
+    regions (block rect, CRC of the blocks replaced, a pool of BC7 blocks and runs of pool indices in row order), and
+    its layouts: per layout a tag (empty when the language has one), the section offsets and length, and the edits
+    (section, length, offset in the section, original bytes, new bytes). A CRC32 of everything ends it."""
     out = bytearray(MAGIC + struct.pack('<I', len(results)))
-    for lang, r in results:
+    for variants, r in results:
+        lang = variants[0]
         out += lang.key.encode().ljust(12, b'\0')
         t = lang.tex
         out += struct.pack('<4I', t['width'], t['height'], t['pitch'], t['size'])
@@ -512,10 +598,13 @@ def write_asset(path, results):
                     runs.append([i, 1])
             out += struct.pack('<7I', *rect, zlib.crc32(orig), len(pool), len(runs))
             out += b''.join(pool) + b''.join(struct.pack('<HH', i, n) for i, n in runs)
-        out += struct.pack('<12I', *lang.layout.offsets, len(lang.layout.original))
-        out += struct.pack('<I', len(r['edits']))
-        for sec, off, old, new in r['edits']:
-            out += struct.pack('<BBHI', sec, len(old), 0, off) + old + new
+        out += struct.pack('<I', len(variants))
+        for v, edits in zip(variants, r['edits']):
+            out += v.tag.encode().ljust(12, b'\0')
+            out += struct.pack('<12I', *v.layout.offsets, len(v.layout.original))
+            out += struct.pack('<I', len(edits))
+            for sec, off, old, new in edits:
+                out += struct.pack('<BBHI', sec, len(old), 0, off) + old + new
     out += struct.pack('<I', zlib.crc32(out))
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     Path(path).write_bytes(out)
@@ -583,46 +672,102 @@ def render_plate_frames(lang, atlas, lay, parts, scale=2.5):
     return sheet
 
 
+def check_rows(english, lang):
+    """The rows a language shares with the USA English title are the same art (one face, the region's own raster)."""
+    ref = {src: english.crop(uv) for uv, src in english.sources.items()}
+    for uv, src in lang.sources.items():
+        a, b = ref[src], lang.crop(uv)
+        assert a.shape == b.shape and np.abs(a[:, :, 3].astype(int) - b[:, :, 3]).max() <= 32, (lang.name, uv, src)
+
+
+def distinguish(results):
+    """Reference blocks that tell each language's atlas from every other one of its size: the second row's plate, or
+    where another atlas has the same plate (the Chinese ones), the first sprite of the atlas whose blocks differ."""
+    for variants, r in results:
+        lang = variants[0]
+        others = [o[0] for o, _ in results if o[0].key != lang.key and o[0].tex['width'] == lang.tex['width']]
+        sprites = [lang.layout.sprite(i) for i in range(lang.layout.count(tl.SPRITES))]
+        rects = [lang.uv_rect(s['uv']) for s in sprites if s['kind'] == tl.TEXTURED and s['tex'] == TEXT_TEXTURE]
+        candidates = [r['reference'][0]] + [(x0 // 4, y0 // 4, (x1 - x0) // 4, (y1 - y0) // 4) for x0, y0, x1, y1 in rects]
+        for c in candidates:
+            crc = zlib.crc32(tiled_blocks(lang, c))
+            if c[2] and c[3] and all(zlib.crc32(tiled_blocks(o, c)) != crc for o in others):
+                break
+        else:
+            raise SystemExit(f'{lang.key}: no sprite tells its atlas from the others')
+        if c != r['reference'][0]:
+            print(f'  {lang.key}: reference blocks {c} (the plate is shared with another atlas)')
+        label = [(bx, by, bx + bw, by + bh) for (bx, by, bw, bh), _, _ in r['regions']]
+        assert not any(c[0] < x1 and x0 < c[0] + c[2] and c[1] < y1 and y0 < c[1] + c[3] for x0, y0, x1, y1 in label)
+        r['reference'] = (c, crc)
+
+
+def preview(out, variants, r):
+    out.mkdir(parents=True, exist_ok=True)
+    lang = variants[0]
+    atlas = decoded_atlas(lang, r)
+    for v in variants:
+        name = f'{v.key}-{v.tag}' if v.tag else v.key
+        original = tl.Layout(v.layout.original)
+        geo = geometry(original)
+        names = [(original, 'NEW_GAME_00'), (original, 'LOAD_GAME_00')] + [(v.layout, n) for n in THREE_ROW]
+        sheet = Image.new('RGBA', (1300, 270 * len(names)), (0, 0, 0, 255))
+        for k, (lay, part) in enumerate(names):
+            sheet.alpha_composite(render(v, atlas, lay, lay.part_index(part), geo['colour']), (0, 270 * k))
+        sheet.convert('RGB').save(out / f'{name}.png')
+        frames = render_plate_frames(v, atlas, v.layout, ['LOAD_GAME_P00', 'EXTRA_GAME_P00', 'EXTRA_GAME_P01'])
+        frames.convert('RGB').save(out / f'{name}-animation.png')
+    geo = geometry(tl.Layout(lang.layout.original))
+    crops = [atlas[y0:y1, x0:x1] for x0, y0, x1, y1 in (r['bold_rect'], r['thin_rect'])]
+    crops += [lang.rgba[slice(*lang.uv_rect(s['uv'])[1::2]), slice(*lang.uv_rect(s['uv'])[0::2])] for s in geo['plates'][1]]
+    crops += [lang.crop(uv) for uv in geo['rows'][1]]
+    labels = Image.new('RGBA', (max(c.shape[1] for c in crops) + 16, sum(c.shape[0] + 12 for c in crops)), (40, 44, 78, 255))
+    y = 0
+    for c in crops:
+        labels.alpha_composite(Image.fromarray(c), (8, y))
+        y += c.shape[0] + 12
+    labels.convert('RGB').save(out / f'{lang.key}-labels.png')
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('folder')
     ap.add_argument('--patch2')
+    ap.add_argument('--japan', required=True, help='folder with the Japanese ROBO.CPK')
+    ap.add_argument('--japan-update', action='append', required=True, help='folder with a Japanese update\'s ROBO_PATCH.CPK')
+    ap.add_argument('--asia', required=True, help='folder with ROBO_CN.CPK and ROBO_TW.CPK')
     ap.add_argument('--out', default=str(HERE.parents[1] / 'assets' / 'exit_game' / 'title-labels.bin'))
     ap.add_argument('--preview')
     ap.add_argument('--cache', help='folder for the decoded atlases between runs')
     a = ap.parse_args()
-    langs = [Language(k, s, label, src, a.folder, a.patch2, a.cache) for k, s, label, src in LANGUAGES]
+    titles = []
+    for k, s, label, src in LANGUAGES:
+        ftx, (mbs,), rgba = title_files(a.cache, k, usa_title(a.folder, a.patch2, k, s))
+        titles.append([Language(k, label, src, ftx, mbs, rgba, joined=k == 'english')])
+    ftx, (base, update), rgba = title_files(a.cache, 'japanese', japan_title(a.japan, a.japan_update))
+    titles.append([Language('japanese', 'EXIT', english_rows(-2), ftx, base, rgba, 'base', True),
+                   Language('japanese', 'EXIT', english_rows(), ftx, update, rgba, 'update', True)])
+    for key, suffix in (('schinese', 'CN'), ('tchinese', 'TW')):
+        ftx, (mbs,), rgba = title_files(a.cache, key, asia_title(a.asia, suffix))
+        titles.append([Language(key, 'EXIT', english_rows(), ftx, mbs, rgba, joined=True)])
     print('letters:')
-    pools, own = build_pools(langs)
+    usa = [t[0] for t in titles[:len(LANGUAGES)]]
+    pools, own = build_pools(usa)
+    for variants in titles[len(LANGUAGES):]:
+        for v in variants:
+            check_rows(usa[0], v)
+            own_letters(v, pools, own)
     results = []
-    for lang in langs:
-        original = tl.Layout(lang.layout.original)
-        r = plan(lang, pools, own)
-        results.append((lang, r))
+    for variants in titles:
+        r = plan(variants, pools, own)
+        results.append((variants, r))
+        lang = variants[0]
         print(f'{lang.key}: "{lang.label}" plate {r["bold"].shape[1]}x{r["bold"].shape[0]} at {r["bold_rect"][:2]}, '
-              f'thin {r["thin"].shape[1]}x{r["thin"].shape[0]} at {r["thin_rect"][:2]}, {len(r["edits"])} layout records')
+              f'thin {r["thin"].shape[1]}x{r["thin"].shape[0]} at {r["thin_rect"][:2]}, '
+              f'{", ".join(f"{len(e)} layout records" + (f" ({v.tag})" if v.tag else "") for v, e in zip(variants, r["edits"]))}')
         if a.preview:
-            out = Path(a.preview)
-            out.mkdir(parents=True, exist_ok=True)
-            atlas = decoded_atlas(lang, r)
-            geo = geometry(original)
-            names = [(original, 'NEW_GAME_00'), (original, 'LOAD_GAME_00')] + [(lang.layout, n) for n in THREE_ROW]
-            sheet = Image.new('RGBA', (1300, 270 * len(names)), (0, 0, 0, 255))
-            for k, (lay, name) in enumerate(names):
-                sheet.alpha_composite(render(lang, atlas, lay, lay.part_index(name), geo['colour']), (0, 270 * k))
-            sheet.convert('RGB').save(out / f'{lang.key}.png')
-            frames = render_plate_frames(lang, atlas, lang.layout, ['LOAD_GAME_P00', 'EXTRA_GAME_P00', 'EXTRA_GAME_P01'])
-            frames.convert('RGB').save(out / f'{lang.key}-animation.png')
-            crops = [atlas[y0:y1, x0:x1] for x0, y0, x1, y1 in (r['bold_rect'], r['thin_rect'])]
-            row2 = geo['rows'][1]
-            crops += [lang.rgba[slice(*lang.uv_rect(s['uv'])[1::2]), slice(*lang.uv_rect(s['uv'])[0::2])] for s in geo['plates'][1]]
-            crops += [lang.crop(uv) for uv in row2]
-            labels = Image.new('RGBA', (max(c.shape[1] for c in crops) + 16, sum(c.shape[0] + 12 for c in crops)), (40, 44, 78, 255))
-            y = 0
-            for c in crops:
-                labels.alpha_composite(Image.fromarray(c), (8, y))
-                y += c.shape[0] + 12
-            labels.convert('RGB').save(out / f'{lang.key}-labels.png')
+            preview(Path(a.preview), variants, r)
+    distinguish(results)
     print(f'{a.out}: {write_asset(a.out, results)} bytes')
 
 

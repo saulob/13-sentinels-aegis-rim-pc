@@ -465,7 +465,31 @@ std::optional<InstallResult> ReuseInstalledBuild(const GameRoots& roots, std::sp
     if (prepared.state != GameFileState::kValid || prepared.build != &build) {
         return std::nullopt;
     }
+    // Installing an installed build of another region switches to that region; its files are already in place.
+    if (const GameBuild* active = LastPreparedBuild(roots, builds);
+        active && std::string_view(active->title_id) != build.title_id) {
+        std::error_code ec;
+        fs::last_write_time(target.app0 / kPreparedMarker, fs::file_time_type::clock::now(), ec);
+    }
     return Failure(InstallStatus::kUpToDate, build.label);
+}
+
+// Install update upgrades the active game: an update of another title is refused, whatever other region is installed.
+std::optional<InstallResult> RefuseUpdateOfOtherTitle(const GameRoots& roots, const InstallHooks& hooks,
+                                                      std::span<const GameBuild> builds, const GameBuild& update) {
+    if (hooks.expected != PackageKind::kUpdate || !IsUpdateBuild(update)) {
+        return std::nullopt;
+    }
+    const GameBuild* active = LastPreparedBuild(roots, builds);
+    if (!active || std::string_view(active->title_id) == update.title_id) {
+        return std::nullopt;
+    }
+    InstallResult result = Failure(InstallStatus::kUpdateForOtherTitle,
+                                   std::string(update.label) + " is an update of " + update.title_id +
+                                       ", the active game is " + active->label);
+    result.update_title_id = update.title_id;
+    result.installed_title_id = active->title_id;
+    return result;
 }
 
 // A package that names a supported build but carries another executable is diagnosed in place, before anything is
@@ -700,6 +724,48 @@ RemoveResult RemoveInstalledUpdate(const GameRoots& roots, const GameBuild& buil
     return result;
 }
 
+std::vector<const GameBuild*> InstalledUpdatesOf(const GameRoots& roots, std::string_view title_id,
+                                                 std::span<const GameBuild> builds) {
+    std::vector<const GameBuild*> updates;
+    for (const GameBuild* build : PreparedBuilds(roots, builds)) {
+        if (IsUpdateBuild(*build) && title_id == build->title_id) {
+            updates.push_back(build);
+        }
+    }
+    return updates;
+}
+
+RemoveAllResult RemoveInstalledUpdatesOf(const GameRoots& roots, std::string_view title_id,
+                                         std::span<const GameBuild> builds) {
+    RemoveAllResult result;
+    for (const GameBuild& build : builds) {
+        if (!IsUpdateBuild(build) || title_id != build.title_id) {
+            continue;
+        }
+        const RemoveResult removed = RemoveInstalledUpdate(roots, build, builds);
+        if (removed.status == RemoveStatus::kRemoved) {
+            ++result.removed;
+        } else if (removed.status != RemoveStatus::kNotInstalled) {
+            ++result.failed;
+        }
+        if (!removed.detail.empty() && removed.status != RemoveStatus::kNotInstalled) {
+            result.detail += (result.detail.empty() ? "" : "; ") + removed.detail;
+        }
+    }
+    for (const GameBuild& build : builds) {
+        if (IsUpdateBuild(build) || title_id != build.title_id || PreparationScope(BuildPaths(roots, build).app0) != "full") {
+            continue;
+        }
+        if (result.removed > 0) {
+            std::error_code ec;
+            fs::last_write_time(BuildPaths(roots, build).app0 / kPreparedMarker, fs::file_time_type::clock::now(), ec);
+        }
+        const GameBuild* active = LastPreparedBuild(roots, builds);
+        result.base_selected = active == &build;
+    }
+    return result;
+}
+
 bool FinishInterruptedRemovals(const GameRoots& roots, std::span<const GameBuild> builds) {
     bool clean = true;
     std::string detail;
@@ -780,6 +846,9 @@ InstallResult InstallFromPackage(const fs::path& package_file, const GameRoots& 
     if (hooks.expected == PackageKind::kUpdate && identity.layer == 0) {
         return recognized(Failure(InstallStatus::kExpectedUpdatePackage, std::string("base package for ") + build.label));
     }
+    if (std::optional<InstallResult> refused = RefuseUpdateOfOtherTitle(roots, hooks, builds, build)) {
+        return recognized(*refused);
+    }
     if (std::optional<InstallResult> reused = ReuseInstalledBuild(roots, builds, build, hooks.replace_active)) {
         return recognized(*reused);
     }
@@ -823,6 +892,9 @@ InstallResult InstallFromFolder(const fs::path& source_dir, const GameRoots& roo
     }
     if (hooks.expected == PackageKind::kUpdate && !IsUpdateBuild(build)) {
         return Failure(InstallStatus::kExpectedUpdatePackage, std::string("base folder for ") + build.label);
+    }
+    if (std::optional<InstallResult> refused = RefuseUpdateOfOtherTitle(roots, hooks, builds, build)) {
+        return *refused;
     }
     if (std::optional<InstallResult> reused = ReuseInstalledBuild(roots, builds, build, hooks.replace_active)) {
         return *reused;
@@ -929,7 +1001,7 @@ InstallMessage DescribeInstall(InstallStatus status) {
                 Tr("The port's game folder holds other files. Move them out and try again.")};
     case InstallStatus::kNoSpace:
         return {Tr("Not enough free space"),
-                Tr("The game needs about 4.5 GB and the update about 0.7 GB more. Free up disk space and try again.")};
+                Tr("The game needs up to 5 GB and an update up to 1.3 GB more. Free up disk space and try again.")};
     case InstallStatus::kWriteFailed:
         return {Tr("Could not install the game"), Tr("The game files could not be written next to the port.")};
     case InstallStatus::kPrepareFailed:
@@ -937,22 +1009,34 @@ InstallMessage DescribeInstall(InstallStatus status) {
                 Tr("The game's code could not be prepared. The log has the details.")};
     case InstallStatus::kUpdateNeedsBase:
         return {Tr("Base game required"),
-                Tr("This package is an update. Install the CUSA19610 1.00 USA base package first, then install the "
-                   "update.")};
+                Tr("This package is an update. Install the base game package of the same title ID (CUSA number) "
+                   "first, then install the update.")};
     case InstallStatus::kUpToDate:
         return {Tr("Already installed"), Tr("This version is already installed.")};
     case InstallStatus::kExpectedBasePackage:
         return {Tr("This is an update package"),
-                Tr("Install game needs the base game. Use Install update for the 1.01 or 1.02 update package.")};
+                Tr("Install game needs the base game. Use Install update for an update package.")};
     case InstallStatus::kExpectedUpdatePackage:
         return {Tr("This is the base game package"),
-                Tr("Install update needs the 1.01 or 1.02 update package. Use Install game for the base game.")};
+                Tr("Install update needs an update package. Use Install game for the base game.")};
+    case InstallStatus::kUpdateForOtherTitle:
+        return {Tr("Update for another game version"),
+                Tr("Install the matching game version before applying this update.")};
     case InstallStatus::kUnsupportedBuild:
         return {Tr("13 Sentinels: Aegis Rim version not supported yet"),
                 Tr("Diagnostic information was written to the latest log. Please share the latest log when reporting "
                    "this version on GitHub.")};
     }
     return {Tr("Could not install the game"), Tr("An unexpected error occurred.")};
+}
+
+InstallMessage DescribeInstall(const InstallResult& result) {
+    InstallMessage message = DescribeInstall(result.status);
+    if (result.status == InstallStatus::kUpdateForOtherTitle) {
+        message.title = Tr("This update is for ") + result.update_title_id + Tr(", but the installed game is ") +
+                        result.installed_title_id;
+    }
+    return message;
 }
 
 } // namespace tsr

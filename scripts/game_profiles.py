@@ -8,7 +8,12 @@ from pathlib import Path
 from ps4_module import parse_sfo
 
 BASE_LAYER = {'app_ver': '01.00', 'sfo_version': '01.00', 'update': False}
+BASE_LAYER_0101 = {'app_ver': '01.00', 'sfo_version': '01.01', 'update': False}
 LANGUAGE_ARCHIVES = ('ROBO_FR.CPK', 'ROBO_GE.CPK', 'ROBO_IT.CPK', 'ROBO_SP.CPK')
+# Linked after the eboot in this order: libc.prx needs libSceFios2.prx.
+MODULES = ('libc.prx', 'libSceFios2.prx', 'libSceNpToolkit2.prx')
+# What the loader needs; the game data (ROBO*.CPK) is only unpacked with --scope full.
+CORE_PATTERNS = ('eboot.bin', 'sce_module/*', 'sce_sys/*', '*.plt')
 
 PROFILES = {
     'CUSA19610': {
@@ -39,12 +44,84 @@ PROFILES = {
         },
         'entry': 'eboot.bin',
         'extra_executables': (),
-        # Linked after the eboot in this order: libc.prx needs libSceFios2.prx.
-        'modules': ('libc.prx', 'libSceFios2.prx', 'libSceNpToolkit2.prx'),
-        # What the loader needs; the game data (ROBO*.CPK) is only unpacked with --scope full.
-        'core_patterns': ('eboot.bin', 'sce_module/*', 'sce_sys/*', '*.plt'),
+        'modules': MODULES,
+        'core_patterns': CORE_PATTERNS,
+    },
+    'CUSA19620': {
+        'name': '13 Sentinels: Aegis Rim',
+        'region': 'Europe',
+        'content_id': 'EP0177-CUSA19620_00-13SENTINELSEFIGS',
+        'versions': {
+            '1.00': {
+                'layers': (BASE_LAYER_0101,),
+                'eboot_sha256': 'e4df1d07de8afac5f55c91ea5f54f86f8b3c9999ca7e2ac3d602d04ea11490e1',
+                'folder': 'CUSA19620-1.00', 'regional_archive': 'ROBO_US.CPK', 'extra_files': LANGUAGE_ARCHIVES,
+            },
+            '1.01': {
+                'layers': (BASE_LAYER_0101, {'app_ver': '01.01', 'sfo_version': '01.00', 'update': True}),
+                'eboot_sha256': 'dafcc5f005da0eb74f7289c6dad4e8b8079a400e4832b3bc0a47b1c26a050533',
+                # The same update repackaged for older firmware: only the eboot's SDK version fields differ.
+                'alternate_eboots': ('123730cd2ee9b1ebbed4a6cc2fe7854154aad82645ef12da15d7e34b82da6b28',),
+                'folder': 'CUSA19620-1.01', 'regional_archive': 'ROBO_US.CPK',
+                'extra_files': LANGUAGE_ARCHIVES + ('ROBO_PATCH_US.CPK', 'sce_discmap_patch.plt'),
+            },
+        },
+        'entry': 'eboot.bin',
+        'extra_executables': (),
+        'modules': MODULES,
+        'core_patterns': CORE_PATTERNS,
+    },
+    'CUSA10602': {
+        'name': '13 Sentinels: Aegis Rim',
+        'region': 'Japan',
+        'content_id': 'JP0005-CUSA10602_00-13K0000000000000',
+        'versions': {
+            '1.00': {
+                'layers': (BASE_LAYER,),
+                'eboot_sha256': '6d6f67ce332091875c56d211a60d1158075e6516afc0b188029ed420dee85d0c',
+                'folder': 'CUSA10602-1.00', 'regional_archive': 'ROBO.CPK', 'extra_files': (),
+            },
+            '1.03': {
+                'layers': (BASE_LAYER, {'app_ver': '01.03', 'sfo_version': '01.00', 'update': True}),
+                'eboot_sha256': 'fdd1b5ad5d8a42caf81397f19dc53914bcc927fe06fd077845d425528e07c11a',
+                'folder': 'CUSA10602-1.03', 'regional_archive': 'ROBO.CPK',
+                'extra_files': ('ROBO_PATCH.CPK', 'ROBO_PATCH2.CPK', 'sce_discmap_patch.plt'),
+            },
+            # 1.04 holds everything of 1.03 and is laid over the base alone.
+            '1.04': {
+                'layers': (BASE_LAYER, {'app_ver': '01.04', 'sfo_version': '01.00', 'update': True}),
+                'eboot_sha256': '3bcaeac50607e4ded31b5123a4170f646bdb0441a070fe9ce6757dfd60c4fbcb',
+                'folder': 'CUSA10602-1.04', 'regional_archive': 'ROBO.CPK',
+                'extra_files': ('ROBO_PATCH.CPK', 'sce_discmap_patch.plt'),
+            },
+        },
+        'entry': 'eboot.bin',
+        'extra_executables': (),
+        'modules': MODULES,
+        'core_patterns': CORE_PATTERNS,
+    },
+    'CUSA18093': {
+        'name': '13 Sentinels: Aegis Rim',
+        'region': 'Asia',
+        'content_id': 'HP0177-CUSA18093_00-13K0000000000000',
+        'versions': {
+            '1.00': {
+                'layers': (BASE_LAYER_0101,),
+                'eboot_sha256': 'dd6d54e99b1246dbecd1fa9556bf90e58fe6ff5cfdf01f010bfd9a4c6c572bcf',
+                'folder': 'CUSA18093-1.00', 'regional_archive': 'ROBO_CN.CPK', 'extra_files': ('ROBO_TW.CPK',),
+            },
+        },
+        'entry': 'eboot.bin',
+        'extra_executables': (),
+        'modules': MODULES,
+        'core_patterns': CORE_PATTERNS,
     },
 }
+
+
+def accepts_eboot(build, sha):
+    """True when `sha` is the build's eboot.bin or an alternate packaging of it."""
+    return sha == build['eboot_sha256'] or sha in build.get('alternate_eboots', ())
 
 
 def title_id(game):

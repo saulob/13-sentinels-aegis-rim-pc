@@ -46,12 +46,16 @@ static int boot_image_load(const char *path, BootImage *image) {
     return 1;
 }
 
-/* `folder` under build\image, else `work` under game\work. */
+/* `folder` under build\image, else `work` under game\work, else `folder` under TSR_TEST_IMAGES. */
 static int boot_image_load_build(const char *folder, const char *work, BootImage *image) {
     char path[512];
     snprintf(path, sizeof(path), "%s/build/image/%s/boot.bin", TSR_SOURCE_DIR, folder);
     if (boot_image_load(path, image)) return 1;
     snprintf(path, sizeof(path), "%s/game/work/%s/boot.bin", TSR_SOURCE_DIR, work);
+    if (boot_image_load(path, image)) return 1;
+    const char *root = getenv("TSR_TEST_IMAGES");
+    if (!root || !*root) return 0;
+    snprintf(path, sizeof(path), "%s/%s/boot.bin", root, folder);
     return boot_image_load(path, image);
 }
 

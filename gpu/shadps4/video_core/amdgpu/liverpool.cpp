@@ -148,7 +148,7 @@ void Liverpool::Process(std::stop_token stoken) {
                 if (queue.submits.empty()) {
                     continue;
                 }
-                task = queue.submits.front();
+                task = queue.submits.front().task;
             }
             task.resume();
 
@@ -156,6 +156,7 @@ void Liverpool::Process(std::stop_token stoken) {
                 task.destroy();
 
                 std::scoped_lock lock{queue.m_access};
+                command_snapshots.Return(std::move(queue.submits.front().commands));
                 queue.submits.pop();
 
                 --num_submits;
@@ -692,10 +693,27 @@ void ScanDcb(std::span<const u32> dcb, int depth) {
         st = DcbStats{};
     }
 }
+
+void ReportRewrittenCommands(std::span<const u32> submitted, const u32* guest) {
+    static bool reported = false;
+    const u64 bytes = submitted.size_bytes();
+    if (reported || bytes == 0 ||
+        Core::Memory::Instance()->ClampRangeSize(reinterpret_cast<VAddr>(guest), bytes) != bytes) {
+        return;
+    }
+    const size_t at = FirstRewrittenWord(submitted, guest);
+    if (at == submitted.size()) {
+        return;
+    }
+    reported = true;
+    std::printf("GPU: the game rewrote a command buffer it had submitted before the GPU had read it (%zu dwords "
+                "at %p, first change at dword %zu: %08x -> %08x); the GPU read the words as submitted\n",
+                submitted.size(), static_cast<const void*>(guest), at, submitted[at], guest[at]);
+}
 } // namespace
 
 Liverpool::Task Liverpool::ProcessGraphics(std::span<const u32> dcb, std::span<const u32> ccb,
-                                           u64 seq) {
+                                           u64 seq, const u32* guest_dcb) {
     FIBER_ENTER(dcb_task_name);
     // Top-level buffers enqueued for the draw preparation workers (nested IBs are not).
     Vulkan::DrawPreparation* draw_prep =
@@ -722,6 +740,8 @@ Liverpool::Task Liverpool::ProcessGraphics(std::span<const u32> dcb, std::span<c
     }
 
     const auto base_addr = reinterpret_cast<uintptr_t>(dcb.data());
+    size_t snapshot_words = guest_dcb ? dcb.size() : 0;
+    bool in_snapshot = guest_dcb != nullptr;
     while (!dcb.empty()) {
         ProcessCommands();
 
@@ -1205,6 +1225,13 @@ Liverpool::Task Liverpool::ProcessGraphics(std::span<const u32> dcb, std::span<c
                 if (!rasterizer) {
                     break;
                 }
+                if (in_snapshot) {
+                    // The packets after a rewind stay the game's until it marks the rewind valid.
+                    snapshot_words = dcb.data() - reinterpret_cast<const u32*>(base_addr);
+                    dcb = GuestRest(dcb, reinterpret_cast<const u32*>(base_addr), guest_dcb);
+                    header = reinterpret_cast<const PM4Header*>(dcb.data());
+                    in_snapshot = false;
+                }
                 const PM4CmdRewind* rewind = reinterpret_cast<const PM4CmdRewind*>(header);
                 while (!rewind->Valid()) {
                     YIELD_GFX();
@@ -1316,6 +1343,10 @@ Liverpool::Task Liverpool::ProcessGraphics(std::span<const u32> dcb, std::span<c
             RESUME_GFX(ce_task);
         }
         ce_task.handle.destroy();
+    }
+
+    if (guest_dcb) {
+        ReportRewrittenCommands({reinterpret_cast<const u32*>(base_addr), snapshot_words}, guest_dcb);
     }
 
     if (rasterizer && seq != NoSeq) {
@@ -1628,50 +1659,13 @@ Liverpool::Task Liverpool::ProcessCompute(std::span<const u32> acb, u32 vqid) {
     FIBER_EXIT;
 }
 
-Liverpool::CmdBuffer Liverpool::CopyCmdBuffers(std::span<const u32> dcb, std::span<const u32> ccb) {
-    auto& queue = mapped_queues[GfxQueueId];
-    ASSERT_MSG(queue.dcb_buffer.capacity() >= queue.dcb_buffer_offset + dcb.size(),
-               "dcb copy buffer out of reserved space");
-    ASSERT_MSG(queue.ccb_buffer.capacity() >= queue.ccb_buffer_offset + ccb.size(),
-               "ccb copy buffer out of reserved space");
-
-    queue.dcb_buffer.resize(
-        std::max(queue.dcb_buffer.size(), queue.dcb_buffer_offset + dcb.size()));
-    queue.ccb_buffer.resize(
-        std::max(queue.ccb_buffer.size(), queue.ccb_buffer_offset + ccb.size()));
-
-    const u32 prev_dcb_buffer_offset = queue.dcb_buffer_offset;
-    const u32 prev_ccb_buffer_offset = queue.ccb_buffer_offset;
-    if (!dcb.empty()) {
-        std::memcpy(queue.dcb_buffer.data() + queue.dcb_buffer_offset, dcb.data(),
-                    dcb.size_bytes());
-        queue.dcb_buffer_offset += dcb.size();
-        dcb = std::span<const u32>{queue.dcb_buffer.begin() + prev_dcb_buffer_offset,
-                                   queue.dcb_buffer.begin() + queue.dcb_buffer_offset};
-    }
-
-    if (!ccb.empty()) {
-        std::memcpy(queue.ccb_buffer.data() + queue.ccb_buffer_offset, ccb.data(),
-                    ccb.size_bytes());
-        queue.ccb_buffer_offset += ccb.size();
-        ccb = std::span<const u32>{queue.ccb_buffer.begin() + prev_ccb_buffer_offset,
-                                   queue.ccb_buffer.begin() + queue.ccb_buffer_offset};
-    }
-
-    return std::make_pair(dcb, ccb);
-}
-
 void Liverpool::SubmitGfx(std::span<const u32> dcb, std::span<const u32> ccb) {
     auto& queue = mapped_queues[GfxQueueId];
 
-    if (EmulatorSettings.IsCopyGpuBuffers()) {
-        std::tie(dcb, ccb) = CopyCmdBuffers(dcb, ccb);
-    }
-
-    // The copy for the draw preparation workers is made before taking the queue lock, which
-    // the GPU thread needs to pick up work.
+    // The copies are made before taking the queue lock, which the GPU thread needs to pick up work.
+    auto commands = command_snapshots.Take(dcb, ccb);
     auto* draw_prep = rasterizer ? rasterizer->DrawPreparationOrNull() : nullptr;
-    auto prep_submission = draw_prep ? draw_prep->Build(dcb) : nullptr;
+    auto prep_submission = draw_prep ? draw_prep->Build(commands->dcb) : nullptr;
     {
         // Numbering, enqueueing and queueing under one lock keep the three orders identical.
         std::scoped_lock lock{queue.m_access};
@@ -1680,8 +1674,8 @@ void Liverpool::SubmitGfx(std::span<const u32> dcb, std::span<const u32> ccb) {
             seq = gfx_submit_seq++;
             draw_prep->Enqueue(seq, std::move(prep_submission));
         }
-        auto task = ProcessGraphics(dcb, ccb, seq);
-        queue.submits.emplace(task.handle);
+        auto task = ProcessGraphics(commands->dcb, commands->ccb, seq, commands->guest_dcb);
+        queue.submits.push({task.handle, std::move(commands)});
     }
 
     std::scoped_lock lk{submit_mutex};
@@ -1698,7 +1692,7 @@ void Liverpool::SubmitAsc(u32 gnm_vqid, std::span<const u32> acb) {
     const auto& task = ProcessCompute(acb, vqid);
     {
         std::scoped_lock lock{queue.m_access};
-        queue.submits.emplace(task.handle);
+        queue.submits.push({task.handle, nullptr});
     }
 
     std::scoped_lock lk{submit_mutex};

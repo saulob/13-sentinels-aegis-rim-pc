@@ -126,7 +126,7 @@ std::string ExecutableMismatch(const GameBuild& named, const std::string& sha, s
     std::string text = "eboot.bin is not the supported build: SHA-256 " + sha + ", param.sfo names " + named.label +
                        " (executable " + named.eboot_sha256 + ")";
     for (const GameBuild& other : builds) {
-        if (&other != &named && sha == other.eboot_sha256) {
+        if (&other != &named && IsBuildExecutable(other, sha)) {
             text += "; it is the executable of " + std::string(other.label) +
                     ", so the files mix builds (stale executable, or an update that was not applied)";
         }
@@ -140,7 +140,7 @@ const GameBuild* BuildOfImageReport(const std::string& report, std::span<const G
     const std::string app_ver = JsonString(report, "app_ver");
     const GameBuild* found = nullptr;
     for (const GameBuild& build : builds) {
-        if (title != build.title_id || sha != build.eboot_sha256) {
+        if (title != build.title_id || !IsBuildExecutable(build, sha)) {
             continue;
         }
         if (!app_ver.empty()) {
@@ -285,10 +285,34 @@ GamePaths BuildPaths(const GameRoots& roots, const GameBuild& build) {
 }
 
 const GameBuild* LastPreparedBuild(const GameRoots& roots, std::span<const GameBuild> builds) {
-    const GameBuild* chosen = nullptr;
+    struct Title {
+        const GameBuild* build;
+        std::filesystem::file_time_type installed;
+    };
+    std::vector<Title> titles;
     for (const GameBuild& build : builds) {
-        if (PreparationScope(BuildPaths(roots, build).app0) == "full") {
-            chosen = &build; // a later (higher-precedence) build replaces an earlier one; order never goes backward
+        const std::filesystem::path app0 = BuildPaths(roots, build).app0;
+        if (PreparationScope(app0) != "full") {
+            continue;
+        }
+        std::error_code ec;
+        const auto installed = std::filesystem::last_write_time(app0 / kPreparedMarker, ec);
+        const auto when = ec ? std::filesystem::file_time_type{} : installed;
+        if (!titles.empty() && std::string_view(titles.back().build->title_id) == build.title_id) {
+            // a later (higher-precedence) build of a title replaces an earlier one; order never goes backward
+            titles.back().build = &build;
+            titles.back().installed = std::max(titles.back().installed, when);
+        } else {
+            titles.push_back({&build, when});
+        }
+    }
+    const GameBuild* chosen = nullptr;
+    std::filesystem::file_time_type latest{};
+    for (const Title& title : titles) {
+        // Of several installed regions, the one installed (or chosen again with Install game) last plays.
+        if (!chosen || title.installed >= latest) {
+            chosen = title.build;
+            latest = title.installed;
         }
     }
     return chosen;
@@ -442,7 +466,7 @@ GameCheck CheckGameTree(const std::filesystem::path& app0, std::span<const GameB
     if (sha.empty()) {
         return Result(GameFileState::kReadError, "cannot read eboot.bin", {}, &build);
     }
-    if (sha != build.eboot_sha256) {
+    if (!IsBuildExecutable(build, sha)) {
         return Result(GameFileState::kDifferentVersion, ExecutableMismatch(build, sha, builds), sha, &build);
     }
     return Result(GameFileState::kValid, {}, sha, &build);
@@ -537,5 +561,7 @@ extern "C" int tsr_game_build(const char* image_dir, TsrGameBuild* out) {
     out->resolution_site_count = build->resolution_sites.size();
     out->title_id = build->title_id;
     out->version = build->version;
+    out->code_key = build->code_build;
+    out->region = build->region;
     return 1;
 }

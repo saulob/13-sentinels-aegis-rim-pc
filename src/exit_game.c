@@ -16,16 +16,27 @@ static const ExitGameSites kBuilds[] = {
      0x68d7ac, 0x63b1c0, 0xf0, 0x160},
     {"CUSA19610-1.02", 0x3b5a0, {0x36adb8, 0x36b246, 0x36b319, 0x36b37d, 0x36b4b4, 0x36b4dd, 0x36b54d}, 0x36b3e7, 0x36ac8d,
      0x5c6e48, 0x56fee0, 0x110, 0x180},
+    {"CUSA10602-1.00", 0x374c0, {0x347c63, 0x347f94, 0x348067, 0x3480cb, 0x348214, 0x34823d, 0x3482ad}, 0x3481a6, 0x347b4d,
+     0x61f27c, 0x5cd750, 0xf0, 0x160},
+    {"CUSA10602-1.03", 0x37aa0, {0x3afb92, 0x3aff77, 0x3b0047, 0x3b00ab, 0x3b0204, 0x3b022d, 0x3b029d}, 0x3b011c, 0x3af9dd,
+     0x68bc4c, 0x639400, 0xf0, 0x160},
+    {"CUSA10602-1.04", 0x3b270, {0x369148, 0x36956d, 0x369649, 0x3696ad, 0x3697e4, 0x36980d, 0x36987d}, 0x369717, 0x36901d,
+     0x5c50d8, 0x56e170, 0x110, 0x180},
+    {"CUSA18093-1.00", 0x37ed0, {0x3ba013, 0x3ba476, 0x3ba547, 0x3ba5ab, 0x3ba6f4, 0x3ba71d, 0x3ba78d}, 0x3ba686, 0x3b9edd,
+     0x691a2c, 0x63fb20, 0xf0, 0x160},
 };
 
 static const struct {
     const char *key, *name;
-} kLanguageNames[] = {{"english", "English"}, {"french", "French"}, {"german", "German"}, {"italian", "Italian"}, {"spanish", "Spanish"}};
+} kLanguageNames[] = {{"english", "English"}, {"french", "French"}, {"german", "German"}, {"italian", "Italian"},
+                      {"spanish", "Spanish"}, {"japanese", "Japanese"}, {"schinese", "Simplified Chinese"},
+                      {"tchinese", "Traditional Chinese"}};
 
 static ExitGameAsset asset;
 static ExitGameSites sites;
 static ExitGameHandler handler;
-static atomic_int texture_language, layout_language, ready, requested, logged_layout, logged_texture, last_row = -1;
+static atomic_int texture_language, layout_language, layout_variant, ready, requested, logged_layout, logged_texture,
+    last_row = -1;
 
 /* The title's flag block as the hooked reads see it once Exit Game is in place: the third row shown. */
 static uint8_t shown_flags[0x20] = {[0x14] = 1};
@@ -56,6 +67,7 @@ void exit_game_set_handler(ExitGameHandler value) {
 void exit_game_reset(void) {
     atomic_store(&texture_language, 0);
     atomic_store(&layout_language, 0);
+    atomic_store(&layout_variant, 0);
     atomic_store(&ready, 0);
     atomic_store(&requested, 0);
     atomic_store(&logged_layout, 0);
@@ -80,10 +92,20 @@ void exit_game_use_sites(const ExitGameSites *value) {
     sites = *value;
 }
 
+/* "English", or "Japanese, update layout" when the language's atlas has several layouts. */
+static const char *layout_name(int index, int variant, char *out, size_t size) {
+    const ExitGameLabels *l = &asset.languages[index];
+    if (l->layout_count < 2 || variant < 0 || (uint32_t)variant >= l->layout_count) return language_name(index);
+    snprintf(out, size, "%s, %s layout", language_name(index), l->layouts[variant].tag);
+    return out;
+}
+
 static void update_ready(void) {
     const int texture = atomic_load(&texture_language), layout = atomic_load(&layout_language);
     const int now = texture && texture == layout ? texture : 0;
-    if (atomic_exchange(&ready, now) != now && now) printf("Exit Game: title menu extended to 3 rows (%s)\n", language_name(now - 1));
+    char name[64];
+    if (atomic_exchange(&ready, now) != now && now)
+        printf("Exit Game: title menu extended to 3 rows (%s)\n", layout_name(now - 1, atomic_load(&layout_variant), name, sizeof(name)));
 }
 
 void GUEST_HOOK_ABI exit_game_flag_hook(GuestRegs *regs) {
@@ -117,13 +139,18 @@ void GUEST_HOOK_ABI exit_game_layout_hook(GuestRegs *regs) {
     /* The layout's third row points at the label art, so only the language whose art is in place is patched. */
     const int art = atomic_load(&texture_language);
     ExitGamePatchStatus status = EXIT_GAME_OTHER;
-    if (art) status = exit_game_layout_patch(&asset.languages[art - 1], layout);
+    int variant = -1;
+    if (art) status = exit_game_layout_patch(&asset.languages[art - 1], layout, &variant);
     const int language = status == EXIT_GAME_PATCHED || status == EXIT_GAME_ALREADY ? art : 0;
+    atomic_store(&layout_variant, language ? variant : 0);
     atomic_store(&layout_language, language);
     if (!language && !atomic_exchange(&logged_layout, 1)) {
+        char name[64];
         if (!art) printf("Exit Game: title art not recognised, menu left with 2 rows\n");
-        else printf("Exit Game: unsupported title layout (%s), menu left with 2 rows\n",
-                    status == EXIT_GAME_MISMATCH ? "records differ" : "unknown layout");
+        else if (status == EXIT_GAME_MISMATCH)
+            printf("Exit Game: unsupported title layout (%s: records differ), menu left with 2 rows\n",
+                   layout_name(art - 1, variant, name, sizeof(name)));
+        else printf("Exit Game: unsupported title layout (%s: unknown layout), menu left with 2 rows\n", language_name(art - 1));
     }
     update_ready();
 }
@@ -161,6 +188,7 @@ static const uint8_t kGetterLea[] = {0x48, 0x8d, 0x05};               /* lea rax
 static const uint8_t kGetterLoad[] = {0x48, 0x8b, 0x38, 0xe9};
 static const uint8_t kDispatch[] = {0x48, 0x8b, 0x45, 0xc8, 0x8b, 0x00, 0x83, 0xf8, 0x02};
 static const uint8_t kNavigation[] = {0x49, 0x89, 0xc7};              /* mov r15,rax (the row is in ebx) */
+static const uint8_t kNavigationR14[] = {0x49, 0x89, 0xc6};           /* mov r14,rax (Japanese 1.00) */
 static const uint8_t kTextureCopy[] = {0x4c, 0x01, 0xe0, 0x41, 0xf6, 0x46, 0x20, 0x08};
 static const uint8_t kLayoutGetter[] = {0x48, 0x8b, 0x47, 0x08, 0x48, 0x85, 0xc0, 0x74, 0x08, 0x48, 0x8b, 0x80};
 
@@ -184,7 +212,9 @@ static const char *check_sites(const uint8_t *image, uint64_t size, const ExitGa
     if (!getter) return "flag getter";
     for (int i = 0; i < EXIT_GAME_FLAG_READS; ++i)
         if (!flag_read_matches(image, size, s, s->flag_reads[i])) return "flag read";
-    if (!at(image, size, s->flag_reads[NAVIGATION_READ] - sizeof(kNavigation), kNavigation, sizeof(kNavigation)))
+    const uint32_t navigation = s->flag_reads[NAVIGATION_READ] - sizeof(kNavigation);
+    if (!at(image, size, navigation, kNavigation, sizeof(kNavigation)) &&
+        !at(image, size, navigation, kNavigationR14, sizeof(kNavigationR14)))
         return "menu navigation";
     if (!at(image, size, s->confirm_dispatch, kDispatch, sizeof(kDispatch))) return "confirm dispatch";
     const uint8_t bind[] = {0x49, 0x8b, 0xb5, s->layout_resource & 0xff, s->layout_resource >> 8 & 0xff, 0, 0,

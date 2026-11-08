@@ -26,7 +26,7 @@ const char* PromptStyleKey(PromptStyle style);
 const char* PromptStyleLabel(PromptStyle style);
 std::optional<PromptStyle> ParsePromptStyle(std::string_view key);
 
-// The build's Xbox patch (launcher/prompts/xbox-prompts-<version>.dcpx); 1.01 reads the same archives as 1.00.
+// The build's Xbox patch (launcher/prompts/xbox-prompts-<prompt_patch>.dcpx); empty when the build has none.
 std::span<const uint8_t> XboxPromptsPatch(const GameBuild& build);
 
 // The build's prompt archives that exist in app0, in profile order.

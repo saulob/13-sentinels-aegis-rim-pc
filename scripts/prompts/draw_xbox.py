@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Paints Xbox glyphs over the PlayStation ones in the button atlas (HD_Interface_arranged000, 1024x1024), in place:
-every sprite keeps its rectangle. Sprite rectangles come from the version's own Interface.mbs.
+every sprite keeps its rectangle. Sprite rectangles come from the build's own Interface.mbs.
 
-    draw_xbox.py atlas.png Interface.mbs 100|102 out.png --font Poppins-Bold.ttf
+    draw_xbox.py atlas.png Interface.mbs LAYOUT out.png --font Poppins-Bold.ttf     (LAYOUT: a key of SPRITES)
 
 Writes the edited atlas, the mask of changed pixels (out.changed.npy) and a before/after sheet (out.compare.png).
 Poppins Bold is under the SIL Open Font License (fonts.google.com/specimen/Poppins).
@@ -19,32 +19,68 @@ XBOX = {'A': (98, 192, 78), 'B': (228, 68, 60), 'X': (70, 142, 236), 'Y': (242, 
 WHITE = (255, 255, 255)
 LETTER = {'cross': 'A', 'circle': 'B', 'square': 'X', 'tri': 'Y'}
 
-# Sprite indices in Interface.mbs (the UV quads), by role and symbol, per version of the game.
+# UV quad indices in Interface.mbs, by role and symbol, per layout: 100 and 102 are the USA/EUR base and 1.02 layouts,
+# jp100 the JPN base, jp103 the JPN 1.03 (ROBO_PATCH2), jp104 the JPN 1.04, cn and tw the Asian ROBO_CN and ROBO_TW.
+# `cleared` sprites are erased: the TOUCH and PAD words some layouts draw over the touch pad sprite, which becomes VIEW.
 SPRITES = {
     '100': dict(
-        disc_white={'tri': 279, 'circle': 280, 'square': 281, 'cross': 282},
-        disc_colour={'tri': 294, 'circle': 296, 'square': 298, 'cross': 300},
-        flat={'tri': 295, 'circle': 297, 'square': 299, 'cross': 301},
-        outline={'tri': 139, 'circle': 136, 'square': 146, 'cross': 144},
-        faint={'tri': 140, 'circle': 137, 'cross': 141, 'square': 142},
-        glow={'circle': 135, 'tri': 138, 'square': 145, 'cross': 143},
-        digits={'B': 311, 'T': 312},
-        ovals={'MENU': 283, 'VIEW': 285}, words={'MENU': 284, 'VIEW': 286},
-        logos=[287, 309], pad=304),
+        disc_white={'tri': 184, 'circle': 185, 'square': 186, 'cross': 187},
+        disc_colour={'tri': 199, 'circle': 201, 'square': 203, 'cross': 205},
+        flat={'tri': 200, 'circle': 202, 'square': 204, 'cross': 206},
+        outline={'tri': 44, 'circle': 41, 'square': 51, 'cross': 49},
+        faint={'tri': 45, 'circle': 42, 'cross': 46, 'square': 47},
+        glow={'circle': 40, 'tri': 43, 'square': 50, 'cross': 48},
+        digits={'B': 216, 'T': 217},
+        ovals={'MENU': 188, 'VIEW': 190}, words={'MENU': 189, 'VIEW': 191},
+        logos=[192, 214], pad=209),
     '102': dict(
-        disc_white={'tri': 289, 'circle': 290, 'square': 291, 'cross': 292},
-        disc_colour={'tri': 304, 'circle': 309, 'square': 313, 'cross': 317},
-        flat={'tri': 305, 'circle': 310, 'square': 314, 'cross': 318},
-        outline={'tri': 140, 'circle': 137, 'square': 152, 'cross': 143},
-        faint={'tri': 141, 'circle': 138, 'cross': 144, 'square': 145},
-        glow={'circle': 136, 'tri': 139, 'square': 151, 'cross': 142},
-        digits={'B': 336, 'T': 341},
-        ovals={'MENU': 293, 'VIEW': 295}, words={'MENU': 294, 'VIEW': 296},
-        logos=[297, 332], pad=323),
+        disc_white={'tri': 193, 'circle': 194, 'square': 195, 'cross': 196},
+        disc_colour={'tri': 208, 'circle': 213, 'square': 217, 'cross': 221},
+        flat={'tri': 209, 'circle': 214, 'square': 218, 'cross': 222},
+        outline={'tri': 44, 'circle': 41, 'square': 56, 'cross': 47},
+        faint={'tri': 45, 'circle': 42, 'cross': 48, 'square': 49},
+        glow={'circle': 40, 'tri': 43, 'square': 55, 'cross': 46},
+        digits={'B': 240, 'T': 245},
+        ovals={'MENU': 197, 'VIEW': 199}, words={'MENU': 198, 'VIEW': 200},
+        logos=[201, 236], pad=227),
+    'jp100': dict(
+        disc_white={'tri': 186, 'circle': 187, 'square': 188, 'cross': 189},
+        disc_colour={'tri': 201, 'circle': 203, 'square': 205, 'cross': 207},
+        flat={'tri': 202, 'circle': 204, 'square': 206, 'cross': 208},
+        outline={'tri': 44, 'circle': 41, 'square': 51, 'cross': 49},
+        faint={'tri': 45, 'circle': 42, 'cross': 46, 'square': 47},
+        glow={'circle': 40, 'tri': 43, 'square': 50, 'cross': 48},
+        digits={'B': 220, 'T': 221},
+        ovals={'MENU': 190, 'VIEW': 192}, words={'MENU': 191, 'VIEW': 193},
+        logos=[194, 218], pad=211, cleared=[212, 213]),
+    'jp104': dict(
+        disc_white={'tri': 195, 'circle': 196, 'square': 197, 'cross': 198},
+        disc_colour={'tri': 210, 'circle': 215, 'square': 219, 'cross': 223},
+        flat={'tri': 211, 'circle': 216, 'square': 220, 'cross': 224},
+        outline={'tri': 44, 'circle': 41, 'square': 56, 'cross': 47},
+        faint={'tri': 45, 'circle': 42, 'cross': 48, 'square': 49},
+        glow={'circle': 40, 'tri': 43, 'square': 55, 'cross': 46},
+        digits={'B': 244, 'T': 249},
+        ovals={'MENU': 199, 'VIEW': 201}, words={'MENU': 200, 'VIEW': 202},
+        logos=[203, 240], pad=229, cleared=[230, 231]),
+    'cn': dict(
+        disc_white={'tri': 184, 'circle': 185, 'square': 186, 'cross': 187},
+        disc_colour={'tri': 199, 'circle': 201, 'square': 203, 'cross': 205},
+        flat={'tri': 200, 'circle': 202, 'square': 204, 'cross': 206},
+        outline={'tri': 44, 'circle': 41, 'square': 51, 'cross': 49},
+        faint={'tri': 45, 'circle': 42, 'cross': 46, 'square': 47},
+        glow={'circle': 40, 'tri': 43, 'square': 50, 'cross': 48},
+        digits={'B': 218, 'T': 219},
+        ovals={'MENU': 188, 'VIEW': 190}, words={'MENU': 189, 'VIEW': 191},
+        logos=[192, 216], pad=209, cleared=[210, 211]),
 }
+SPRITES['jp103'] = SPRITES['jp100']
+SPRITES['tw'] = SPRITES['100']
+# The atlas arrangement each layout reads: the base one or the rearranged one of the updates.
+ATLAS_OF = {'100': '100', '102': '102', 'jp100': '100', 'jp103': '100', 'jp104': '102', 'cn': '100', 'tw': '100'}
 # BUTTON_BATSU draws the Cross outline and glow as a "+" sprite turned 45 degrees counter-clockwise on screen.
 TURNED = {('outline', 'cross'): 45, ('glow', 'cross'): 45}
-# Flat shapes no sprite entry names on its own (found by matching the flat shapes against the whole atlas).
+# Flat shapes no sprite entry names on its own (found by matching the flat shapes against the whole atlas), per atlas.
 EXTRA = {
     '100': [((900, 130, 960, 190), 'circle', 'outline'), ((962, 192, 1018, 248), 'square', 'outline'),
             ((762, 250, 834, 312), 'tri', 'flat'), ((836, 248, 896, 311), 'cross', 'flat')],
@@ -56,11 +92,15 @@ BLOCK_WORDS = {(206, 346, 384, 390): 'MENU', (206, 399, 402, 443): 'VIEW'}
 
 
 def quads(mbs):
-    data = Path(mbs).read_bytes()
-    count = (data.find(b'UU5A') - 0x120) // 48
+    """{index: (x0, y0, x1, y1)} of the layout's UV quads (FMBS v6 to v8: the section whose offset is the second of the
+    header's table), in 0..1. `mbs` is the file or its bytes."""
+    data = bytes(mbs) if isinstance(mbs, (bytes, bytearray)) else Path(mbs).read_bytes()
+    offsets = [struct.unpack_from('<Q', data, 0xb0 + 8 * i)[0] for i in range(11)]
+    start = offsets[1]
+    end = min(o for o in offsets + [len(data)] if o > start)
     out = {}
-    for i in range(count):
-        f = struct.unpack_from('<12f', data, 0x120 + i * 48)
+    for i in range((end - start) // 48):
+        f = struct.unpack_from('<12f', data, start + i * 48)
         xs, ys = f[2:10:2], f[3:10:2]
         if 0 <= min(xs) and max(xs) <= 1 and 0 <= min(ys) and max(ys) <= 1 and max(xs) > min(xs):
             out[i] = (min(xs), min(ys), max(xs), max(ys))
@@ -280,11 +320,13 @@ def fit_into(a, rect, source, changed):
     changed[y0:y1, x0:x1] = True
 
 
-def paint(a, mbs, version, font):
-    sprites = SPRITES[version]
+def paint(a, mbs, layout, font):
+    sprites = SPRITES[layout]
     uv = quads(mbs)
     rect = lambda i: rect_of(uv[i])
     changed = np.zeros(a.shape[:2], bool)
+    for i in sprites.get('cleared', []):
+        clear_rect(a, rect(i), changed)
     for symbol, i in sprites['disc_white'].items():
         paint_disc(a, rect(i), LETTER[symbol], False, font, changed)
     for symbol, i in sprites['disc_colour'].items():
@@ -292,7 +334,7 @@ def paint(a, mbs, version, font):
     for mode in ('flat', 'outline', 'faint', 'glow'):
         for symbol, i in sprites[mode].items():
             paint_symbol(a, rect(i), LETTER[symbol], mode, font, changed, TURNED.get((mode, symbol), 0))
-    for box, symbol, mode in EXTRA[version]:
+    for box, symbol, mode in EXTRA[ATLAS_OF[layout]]:
         paint_symbol(a, box, LETTER[symbol], mode, font, changed)
     for text, i in sprites['digits'].items():
         paint_label(a, rect(i), text, font, changed)
@@ -314,7 +356,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument('atlas')
     ap.add_argument('mbs')
-    ap.add_argument('version', choices=sorted(SPRITES))
+    ap.add_argument('layout', choices=sorted(SPRITES))
     ap.add_argument('out')
     ap.add_argument('--font', required=True)
     args = ap.parse_args()
@@ -322,7 +364,7 @@ def main():
     if original.shape[:2] != (1024, 1024):
         raise SystemExit('expected the 1024x1024 button atlas')
     edited = original.copy()
-    changed = paint(edited, args.mbs, args.version, args.font)
+    changed = paint(edited, args.mbs, args.layout, args.font)
     changed |= (edited != original).any(-1)
     out = Path(args.out)
     Image.fromarray(edited).save(out)

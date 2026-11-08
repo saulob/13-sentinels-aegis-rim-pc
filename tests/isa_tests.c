@@ -632,7 +632,7 @@ static int count_lzcnt_bytes(const uint8_t *image, uint64_t size) {
 }
 
 /* The LZCNT instructions each build holds (the boot images have no others). */
-static const int build_lzcnts[LZCNT_BUILD_COUNT] = {79, 79, 75};
+static const int build_lzcnts[LZCNT_BUILD_COUNT] = {79, 79, 75, 79, 79, 75, 79};
 
 /* A readable image holding every site of the build, followed by the stub area. */
 typedef struct {
@@ -780,6 +780,11 @@ static uint8_t *boot_image(const char *folder, uint64_t *size, uint64_t *entry, 
     char path[1024];
     snprintf(path, sizeof(path), "%s/build/image/%s/boot.bin", TSR_SOURCE_DIR, folder);
     FILE *f = fopen(path, "rb");
+    const char *extra_root = getenv("TSR_TEST_IMAGES");
+    if (!f && extra_root && *extra_root) {
+        snprintf(path, sizeof(path), "%s/%s/boot.bin", extra_root, folder);
+        f = fopen(path, "rb");
+    }
     if (!f) return NULL;
     char magic[8];
     if (fread(magic, 1, 8, f) != 8 || memcmp(magic, "TSRBOOT1", 8)) return fclose(f), NULL;
@@ -799,7 +804,9 @@ static uint8_t *boot_image(const char *folder, uint64_t *size, uint64_t *entry, 
 }
 
 static void real_images(void) {
-    static const char *const folders[LZCNT_BUILD_COUNT] = {"CUSA19610-1.00", "CUSA19610-1.01", "CUSA19610-1.02"};
+    static const char *const folders[LZCNT_BUILD_COUNT] = {"CUSA19610-1.00", "CUSA19610-1.01", "CUSA19610-1.02",
+                                                           "CUSA10602-1.00", "CUSA10602-1.03", "CUSA10602-1.04",
+                                                           "CUSA18093-1.00"};
     const size_t stubs = lzcnt_compat_stub_bytes();
     for (size_t b = 0; b < LZCNT_BUILD_COUNT; ++b) {
         const LzcntBuild *build = &lzcnt_builds[b];

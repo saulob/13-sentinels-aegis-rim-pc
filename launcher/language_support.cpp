@@ -10,9 +10,17 @@ bool VoiceBankPresent(const std::filesystem::path& app0, const VoiceBank& bank) 
     return archive.Open(app0 / bank.archive) && archive.Find(bank.cues) && archive.Find(bank.stream);
 }
 
+VoiceBank JapaneseVoicesOf(const GameBuild& build) {
+    return {build.voice_archive, kJapaneseVoices.cues, kJapaneseVoices.stream};
+}
+
+VoiceBank EnglishVoicesOf(const GameBuild& build) {
+    return {build.english_voice_archive, kEnglishVoices.cues, kEnglishVoices.stream};
+}
+
 bool EnglishVoicesAvailable(const std::filesystem::path& app0, const GameBuild* build) {
-    return build && build->english_voices && VoiceBankPresent(app0, kJapaneseVoices) &&
-           VoiceBankPresent(app0, kEnglishVoices);
+    return build && build->english_voices && VoiceBankPresent(app0, JapaneseVoicesOf(*build)) &&
+           VoiceBankPresent(app0, EnglishVoicesOf(*build));
 }
 
 LanguageSupport LanguagesOf(const std::filesystem::path& app0, const GameBuild* build) {
