@@ -7,6 +7,7 @@
 #include <iterator>
 #include <system_error>
 
+#include "json_lite.h"
 #include "localization/ui_text.h"
 #include "utf8.h"
 
@@ -25,6 +26,10 @@ constexpr std::string_view kLogPrefix = "13_sentinels_aegis_rim_";
 constexpr std::string_view kLogSuffix = ".log";
 constexpr size_t kFewestLogDigits = 3, kMostLogDigits = 10;
 constexpr size_t kLogsLookedAt = 200;
+constexpr size_t kMostMetadataCharacters = 64, kMostDetailCharacters = 96;
+constexpr std::string_view kTicketPrefix = "13S-";
+constexpr std::string_view kTicketAlphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+constexpr size_t kTicketLength = 10, kSha256Length = 64;
 constexpr size_t kSessionHeadBytes = 128 * 1024;
 // More than the report keeps, so that scrubbing cannot leave it short.
 constexpr size_t kLogTailBytes = 256 * 1024;
@@ -49,6 +54,10 @@ constexpr FieldName kFieldNames[] = {
     {"cusa", "CUSA"},
     {"eboot_sha256", "Executable SHA-256"},
     {"operating_system", "Operating system"},
+    {"renderer", "Renderer"},
+    {"gpu", "Graphics card"},
+    {"driver", "Driver"},
+    {"render_resolution", "Render resolution"},
     {"log_file", "Selected log"},
     {"log_clipped", "Log shortened to its end"},
     {kLogTextKey, "Log after privacy filtering"},
@@ -172,7 +181,68 @@ std::string LinuxDistributionText() {
 }
 #endif
 
+bool AllOf(std::string_view text, bool (*accepts)(char)) {
+    return std::all_of(text.begin(), text.end(), [&](char c) { return accepts(c); });
+}
+
+bool IsDigitOrDot(char c) { return (c >= '0' && c <= '9') || c == '.'; }
+bool IsDigitChar(char c) { return c >= '0' && c <= '9'; }
+bool IsLowerHex(char c) { return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'); }
+
+bool IsGameVersion(std::string_view text) {
+    return !text.empty() && text.size() <= 16 && text.front() >= '0' && text.front() <= '9' && AllOf(text, IsDigitOrDot);
+}
+
+bool IsTitleId(std::string_view text) { return text.size() == 9 && text.starts_with("CUSA") && AllOf(text.substr(4), IsDigitChar); }
+
+bool IsSha256(std::string_view text) { return text.size() == kSha256Length && AllOf(text, IsLowerHex); }
+
+// The rest of the first line that starts with `label`, or nothing.
+std::string_view AfterLabel(std::string_view text, std::string_view label) {
+    for (size_t at = text.find(label); at != std::string_view::npos; at = text.find(label, at + 1)) {
+        if (at != 0 && text[at - 1] != '\n') continue;
+        const size_t start = at + label.size();
+        return text.substr(start, text.find('\n', start) - start);
+    }
+    return {};
+}
+
+// What follows `from` in `text`, up to `to` (the rest when `to` is empty or absent); nothing when `from` is absent.
+std::string_view Between(std::string_view text, std::string_view from, std::string_view to) {
+    const size_t start = text.find(from);
+    if (start == std::string_view::npos) return {};
+    text.remove_prefix(start + from.size());
+    const size_t end = to.empty() ? std::string_view::npos : text.find(to);
+    return text.substr(0, end);
+}
+
 } // namespace
+
+LogDiagnostics ReadLogDiagnostics(std::string_view log_start) {
+    LogDiagnostics found;
+    found.renderer = std::string(Between(AfterLabel(log_start, "Renderer: "), "active ", ""));
+    if (const std::string_view vulkan = AfterLabel(log_start, "GPU: Vulkan device "); !vulkan.empty()) {
+        const size_t open = vulkan.rfind(" (");
+        found.gpu = std::string(vulkan.substr(0, open));
+        if (open != std::string_view::npos && vulkan.back() == ')') found.driver = std::string(vulkan.substr(open + 2, vulkan.size() - open - 3));
+    } else if (const std::string_view opengl = AfterLabel(log_start, "OpenGL: vendor "); !opengl.empty()) {
+        found.gpu = std::string(Between(opengl, ", renderer ", ", version"));
+        found.driver = std::string(Between(opengl, ", version ", ", GLSL"));
+    }
+    std::string_view resolution = AfterLabel(log_start, "Settings: Render resolution ");
+    if (resolution.empty()) resolution = Between(AfterLabel(log_start, "Render resolution: requested "), "main render target ", "");
+    found.render_resolution = std::string(resolution);
+    return found;
+}
+
+std::string Clamped(std::string_view text, size_t most) {
+    std::string out;
+    out.reserve(text.size());
+    for (const char c : text) out += (static_cast<unsigned char>(c) < 0x20 || c == 0x7F) ? ' ' : c;
+    out = TrimmedDescription(out);
+    out.resize(BytesOfCharacters(out, most));
+    return TrimmedDescription(out);
+}
 
 std::vector<GameLog> FindGameLogs(const fs::path& folder, const fs::path& running_log, size_t most) {
     std::vector<GameLog> logs;
@@ -194,12 +264,19 @@ std::vector<GameLog> FindGameLogs(const fs::path& folder, const fs::path& runnin
 }
 
 size_t DefaultGameLog(const std::vector<GameLog>& logs) {
-    const auto started = std::find_if(logs.begin(), logs.end(), [](const GameLog& log) { return log.activity != LogActivity::kLauncher; });
-    if (started != logs.end()) return size_t(started - logs.begin());
-    const auto earlier = std::find_if(logs.begin(), logs.end(), [](const GameLog& log) {
-        return log.role != LogRole::kCurrentLauncher && log.role != LogRole::kCurrentGameplay;
-    });
-    return earlier == logs.end() ? 0 : size_t(earlier - logs.begin());
+    const auto running = [](const GameLog& log) {
+        return log.role == LogRole::kCurrentLauncher || log.role == LogRole::kCurrentGameplay;
+    };
+    const auto first = [&](auto wanted) {
+        const auto found = std::find_if(logs.begin(), logs.end(), [&](const GameLog& log) { return !running(log) && wanted(log); });
+        return found == logs.end() ? logs.size() : size_t(found - logs.begin());
+    };
+    for (const LogActivity activity : {LogActivity::kGameplay, LogActivity::kGameStarted}) {
+        const size_t found = first([&](const GameLog& log) { return log.activity == activity; });
+        if (found < logs.size()) return found;
+    }
+    const size_t earlier = first([](const GameLog&) { return true; });
+    return earlier < logs.size() ? earlier : 0;
 }
 
 const char* LogRoleText(LogRole role) {
@@ -301,10 +378,25 @@ std::optional<IncidentPackage> BuildIncidentPackage(std::string_view description
 
     std::string summary = ScrubText(TrimmedDescription(description), private_facts);
     summary.resize(BytesOfCharacters(summary, kMostDescriptionCharacters));
-    if (summary.empty()) return std::nullopt;
+    summary = TrimmedDescription(summary);
+    if (CountCharacters(summary) < kFewestDescriptionCharacters) return std::nullopt;
 
-    std::string values[] = {std::move(summary), facts.launcher_version, facts.game_build, facts.game_version, facts.cusa,
-                            facts.eboot_sha256, facts.operating_system, log.name, clipped ? "yes" : "no", std::move(text)};
+    const LogDiagnostics graphics = ReadLogDiagnostics(ScrubText(ReadPart(log.path, 0, kSessionHeadBytes), private_facts));
+    std::string values[] = {std::move(summary),
+                            Clamped(facts.launcher_version, kMostMetadataCharacters),
+                            Clamped(facts.game_build, kMostMetadataCharacters),
+                            IsGameVersion(facts.game_version) ? facts.game_version : std::string(),
+                            IsTitleId(facts.cusa) ? facts.cusa : std::string(),
+                            IsSha256(facts.eboot_sha256) ? facts.eboot_sha256 : std::string(),
+                            Clamped(facts.operating_system, kMostMetadataCharacters),
+                            Clamped(graphics.renderer, kMostMetadataCharacters),
+                            Clamped(graphics.gpu, kMostDetailCharacters),
+                            Clamped(graphics.driver, kMostDetailCharacters),
+                            Clamped(graphics.render_resolution, kMostMetadataCharacters),
+                            log.name,
+                            clipped ? "yes" : "no",
+                            std::move(text)};
+    static_assert(std::size(values) == std::size(kFieldNames), "one value per field");
     IncidentPackage package;
     for (size_t i = 0; i < std::size(kFieldNames); ++i) package.fields.push_back({kFieldNames[i].key, kFieldNames[i].label, std::move(values[i])});
     return package;
@@ -323,6 +415,28 @@ std::string IncidentPreviewText(const IncidentPackage& package) {
     }
     return out;
 }
+
+std::string IncidentRequestJson(const IncidentPackage& package) {
+    std::string out = "{";
+    for (const IncidentField& field : package.fields) {
+        if (out.size() > 1) out += ',';
+        out += json::Quote(field.key) + ':' + json::Quote(field.value);
+    }
+    return out + '}';
+}
+
+IncidentPackage SentReportOf(const json::Value& report) {
+    IncidentPackage package;
+    for (const FieldName& name : kFieldNames) package.fields.push_back({name.key, name.label, report.StringOr(name.key)});
+    return package;
+}
+
+bool IsTicket(std::string_view text) {
+    if (text.size() != kTicketLength || !text.starts_with(kTicketPrefix)) return false;
+    return std::all_of(text.begin() + kTicketPrefix.size(), text.end(), [](char c) { return kTicketAlphabet.find(c) != std::string_view::npos; });
+}
+
+bool IsReceipt(std::string_view text) { return IsSha256(text); }
 
 fs::path SaveIncidentReport(const IncidentPackage& package, const fs::path& folder) {
     std::error_code ec;

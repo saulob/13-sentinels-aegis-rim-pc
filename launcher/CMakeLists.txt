@@ -30,15 +30,16 @@ target_link_libraries(tsr_imgui_sdl PUBLIC SDL3::SDL3)
 find_package(ZLIB REQUIRED)
 add_library(tsr_launcher_core STATIC boot_image.cpp build_diagnostics.cpp controller_prompts.cpp cpk_patch.cpp language_support.cpp
     file_browser.cpp game_files.cpp game_install.cpp
-    game_process.cpp game_profile.cpp header_art.cpp incident_report.cpp log_scrubber.cpp options.cpp page_icons.cpp
-    paths.cpp pkg_extract.cpp resolution.c settings.cpp trophy_content.cpp crypto_win.cpp
+    game_process.cpp game_profile.cpp header_art.cpp http_post.cpp incident_client.cpp incident_report.cpp json_lite.cpp
+    log_scrubber.cpp options.cpp page_icons.cpp paths.cpp pkg_extract.cpp report_history.cpp resolution.c settings.cpp
+    trophy_content.cpp crypto_win.cpp
     ${PROJECT_SOURCE_DIR}/src/trophies/trophy_data.cpp ${PROJECT_SOURCE_DIR}/src/trophies/trophy_key.cpp
     ${PROJECT_SOURCE_DIR}/src/trophies/trophy_pack.cpp ${PROJECT_SOURCE_DIR}/src/trophies/trophy_runtime.cpp
     ${PROJECT_SOURCE_DIR}/src/trophies/trophy_service.cpp ${PROJECT_SOURCE_DIR}/src/trophies/trophy_store.cpp
     ${PROJECT_SOURCE_DIR}/src/trophies/trophy_view.cpp ${PROJECT_SOURCE_DIR}/src/trophies/trp_archive.cpp)
 target_include_directories(tsr_launcher_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR} ${PROJECT_SOURCE_DIR}/src)
 target_compile_definitions(tsr_launcher_core PRIVATE TSR_PORT_VERSION="${PROJECT_VERSION}")
-target_link_libraries(tsr_launcher_core PUBLIC trg_core SDL3::SDL3 tsr_keys tsr_startup_phase PRIVATE ZLIB::ZLIB bcrypt)
+target_link_libraries(tsr_launcher_core PUBLIC trg_core SDL3::SDL3 tsr_keys tsr_startup_phase PRIVATE ZLIB::ZLIB bcrypt winhttp)
 set(TSR_LOG_SOURCES ${PROJECT_SOURCE_DIR}/src/runtime_log.c ${PROJECT_SOURCE_DIR}/src/runtime_session_log.c)
 
 # The sidebar's page icons (assets/launcher/icons/*.svg) as a table of byte arrays, page_icons.cpp.
@@ -69,8 +70,8 @@ foreach(version 100 102)
 endforeach()
 target_include_directories(tsr_launcher_core PRIVATE ${PROJECT_SOURCE_DIR}/gpu/shim)
 
-add_library(tsr_launcher STATIC host.cpp incident_page.cpp launcher.cpp package_browser.cpp problem_dialog.cpp shift_key.cpp
-    trophy_page.cpp)
+add_library(tsr_launcher STATIC host.cpp incident_page.cpp launcher.cpp my_reports_page.cpp package_browser.cpp problem_dialog.cpp
+    shift_key.cpp trophy_page.cpp)
 target_compile_definitions(tsr_launcher PRIVATE TSR_PORT_VERSION="${PROJECT_VERSION}")
 target_include_directories(tsr_launcher PRIVATE ${PROJECT_SOURCE_DIR}/gpu/shim)
 target_link_libraries(tsr_launcher PUBLIC tsr_launcher_core trg_launcher tsr_imgui_sdl ${CMAKE_DL_LIBS})
@@ -99,3 +100,10 @@ target_compile_definitions(tsr-game-feature-tests PRIVATE TSR_SOURCE_DIR="${PROJ
 target_link_libraries(tsr-game-feature-tests PRIVATE tsr_launcher_core)
 set_target_properties(tsr-game-feature-tests PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
 target_compile_options(tsr-game-feature-tests PRIVATE -Wall -Wextra)
+
+# The Bug Report page's logic against a stand-in transport and synthetic logs: no window, no network.
+add_executable(tsr-bug-report-tests EXCLUDE_FROM_ALL ../tests/bug_report_tests.cpp)
+target_compile_definitions(tsr-bug-report-tests PRIVATE TSR_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+target_link_libraries(tsr-bug-report-tests PRIVATE tsr_launcher_core)
+set_target_properties(tsr-bug-report-tests PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
+target_compile_options(tsr-bug-report-tests PRIVATE -Wall -Wextra)

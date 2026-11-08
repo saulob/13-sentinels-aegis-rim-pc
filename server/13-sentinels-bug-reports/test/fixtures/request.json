@@ -1,0 +1,16 @@
+{
+  "description": "The game freezes on the loading screen after I pick a save.",
+  "launcher_version": "0.1.0",
+  "game_build": "USA 1.02",
+  "game_version": "1.02",
+  "cusa": "CUSA19610",
+  "eboot_sha256": "075250099ba56c2e8f35b4dc8d35b25c5f98304e45c8546c790d56fe87803ff1",
+  "operating_system": "Windows 11 (build 26200)",
+  "renderer": "Vulkan",
+  "gpu": "NVIDIA GeForce RTX 4070",
+  "driver": "NVIDIA 621.1.0.0, Vulkan 1.4.357",
+  "render_resolution": "1920x1080 (native)",
+  "log_file": "13_sentinels_aegis_rim_026.log",
+  "log_clipped": "no",
+  "log_text": "Renderer: selected vulkan, active Vulkan\nGPU: selected NVIDIA GeForce RTX 4070\nRuntime: guest thread 'main' started\n"
+}

@@ -61,8 +61,13 @@ always shows its original 16:9 picture, with black bars where the window or disp
 fills it instead). There is no Aspect Ratio setting and no True Ultrawide; an `aspect_ratio` line left in `tsr.ini` by an
 earlier build is ignored. The log's `Render resolution:` lines show what was requested and used.
 
-**Bug reports are never uploaded.** The page builds a privacy-filtered report from one chosen log, shows a preview,
-saves it to `logs\reports\`, and opens the GitHub issue tracker only when asked. Attaching the file is your own step.
+**Bug reports** are sent only when you press Send report and confirm. The page builds a privacy-filtered report from one
+chosen log, shows exactly what would be sent, and then makes one outgoing HTTPS request to the developer's report service;
+My Reports shows each report's status and the developer's reply when you press Refresh. Nothing is sent at startup or in the
+background, there is no telemetry and no player identity, and the game is fully playable offline. Until the service is
+deployed the page says it is unavailable and offers to save the same report to `logs\reports\` for a GitHub issue. See
+[docs/BUG_REPORTS.md](docs/BUG_REPORTS.md); the service is in
+[server/13-sentinels-bug-reports](server/13-sentinels-bug-reports/README.md).
 
 **Languages.** Text Language (menus and subtitles: English, French, German, Italian, Spanish) is a launcher choice and is
 kept as chosen: a language a version lacks shows the nearest supported one and the choice stays. Voice Language is shown
@@ -91,6 +96,7 @@ version has one source of truth: `project(... VERSION ...)` in `CMakeLists.txt`.
 | `src/` | Loader and PS4 runtime (kernel, threads, memory, files, save data, pad, audio, Ajm/ATRAC9, services) |
 | `gpu/` | shadPS4-derived video core: Liverpool/Vulkan renderer, shader recompiler, GnmDriver, VideoOut, Videodec2 |
 | `launcher/` | Installer, game checks, boot image builder, TRG Launcher pages, bug reports |
+| `server/` | The bug report service: a Cloudflare Worker and its private dashboard (deployed by hand) |
 | `scripts/` | Read-only developer tools: package and module inspection, boot image preparation, import coverage |
 | `docs/` | Technical notes, starting with [FIRST_BOOT.md](docs/FIRST_BOOT.md) |
 

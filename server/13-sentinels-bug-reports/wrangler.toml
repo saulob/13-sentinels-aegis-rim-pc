@@ -1,0 +1,18 @@
+name = "13-sentinels-bug-reports"
+main = "src/worker.js"
+compatibility_date = "2025-09-01"
+workers_dev = true
+
+[[durable_objects.bindings]]
+name = "REPORTS"
+class_name = "BugReportDesk"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["BugReportDesk"]
+
+# Edge limit per connection address, before the Durable Object is woken. namespace_id must be unique in the Cloudflare account (the SF2 lobby uses 2002).
+[[ratelimits]]
+name = "REPORT_LIMITER"
+namespace_id = "1301"
+simple = { limit = 20, period = 60 }

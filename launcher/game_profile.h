@@ -12,6 +12,8 @@ namespace tsr {
 
 inline constexpr char kGameTitle[] = "13 Sentinels: Aegis Rim";
 inline constexpr char kPortRepository[] = "github.com/saulob/13-sentinels-aegis-rim-pc";
+// The bug report service (server/13-sentinels-bug-reports), https only. TSR_BUG_REPORT_URL overrides it for one run.
+inline constexpr char kBugReportServiceUrl[] = "https://13-sentinels-bug-reports.saulobenigno.workers.dev";
 inline constexpr char kIssuesUrl[] = "https://github.com/saulob/13-sentinels-aegis-rim-pc/issues";
 inline constexpr char kAuthorUrl[] = "https://github.com/saulob";
 inline constexpr char kSponsorUrl[] = "https://github.com/sponsors/saulob";

@@ -1,8 +1,7 @@
 // The Bug Report page's work without a window: the logs it offers and the report it builds.
 //
-// A report is built into an IncidentPackage, whether or not the player previews it. The preview and the saved file both
-// read that package's fields, so what the player can read is what is saved. Nothing is sent: the player attaches the
-// saved file to a GitHub issue themselves.
+// A report is built into an IncidentPackage, whether or not the player previews it. The preview, the saved copy and the
+// request to the service all read that package's fields, so what the player can read is what is sent.
 #pragma once
 
 #include <cstdint>
@@ -16,6 +15,9 @@
 #include "log_scrubber.h"
 
 namespace tsr {
+namespace json {
+class Value;
+}
 
 inline constexpr size_t kMostGameLogs = 5;
 inline constexpr size_t kFewestDescriptionCharacters = 10;
@@ -62,7 +64,8 @@ enum class DraftProblem { kNone, kDescriptionTooShort, kNoLog };
 // Spaces around the description do not count toward its length.
 DraftProblem CheckDraft(std::string_view description, bool has_log);
 
-// The fields of the installed game and this PC that go with every report.
+// The fields of the installed game and this PC that go with every report. The renderer, graphics card, driver and
+// render resolution are read from the start of the selected log.
 struct ReportFacts {
     std::string launcher_version;
     std::string game_build;
@@ -74,6 +77,19 @@ struct ReportFacts {
 
 // "Windows 11 (build 26200)", "Steam Deck: SteamOS 3.6".
 std::string OperatingSystemText();
+
+struct LogDiagnostics {
+    std::string renderer;
+    std::string gpu;
+    std::string driver;
+    std::string render_resolution;
+};
+
+// What the start of a game log says about the renderer and the graphics card; empty fields for what it does not say.
+LogDiagnostics ReadLogDiagnostics(std::string_view log_start);
+
+// `text` without control characters or surrounding spaces, at most `most` characters.
+std::string Clamped(std::string_view text, size_t most);
 
 struct IncidentField {
     std::string_view key;
@@ -94,6 +110,16 @@ std::optional<IncidentPackage> BuildIncidentPackage(std::string_view description
                                                     const PrivateFacts& private_facts);
 
 std::string IncidentPreviewText(const IncidentPackage& package);
+
+// The request body for the report service: every field of the package under its key, in the package's order.
+std::string IncidentRequestJson(const IncidentPackage& package);
+
+// The stored report the service returns to its owner, as the same fields a preview shows.
+IncidentPackage SentReportOf(const json::Value& report);
+
+// 13S-XXXXXX and 64 lowercase hex digits, as the service issues them.
+bool IsTicket(std::string_view text);
+bool IsReceipt(std::string_view text);
 
 // Writes the report as text into `folder`, named after the time; the file's path, empty when it could not be written.
 std::filesystem::path SaveIncidentReport(const IncidentPackage& package, const std::filesystem::path& folder);

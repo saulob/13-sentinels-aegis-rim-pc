@@ -626,7 +626,7 @@ private:
         case PageId::kTrophies:
             return {name, "Your trophies on this PC.", [this](trg::Ui& ui) { PageTrophies(ui); }, nullptr, nullptr};
         case PageId::kBugReport:
-            return {name, "Describe a problem and save a report with one game log.", [this](trg::Ui& ui) { PageBugReport(ui); },
+            return {name, "Describe a problem and send a report with one game log.", [this](trg::Ui& ui) { PageBugReport(ui); },
                     nullptr, nullptr};
         case PageId::kAbout:
             return {name, "This port, and where your files and settings live.", [this](trg::Ui& ui) { PageAbout(ui); },
@@ -1177,7 +1177,8 @@ private:
     IncidentPage::Places IncidentPlaces() const {
         const std::filesystem::path logs = PathFromUtf8(config_.logs_dir ? config_.logs_dir : "logs");
         const std::filesystem::path running = config_.log_file ? PathFromUtf8(config_.log_file) : std::filesystem::path();
-        return {logs, running, UserDir(), {InstallDir(), UserDir().parent_path(), logs.parent_path()}};
+        return {logs, running, UserDir(), {InstallDir(), UserDir().parent_path(), logs.parent_path()},
+                [](const std::string& line) { Log("%s", line.c_str()); }};
     }
 
     ReportFacts CurrentReportFacts() const {

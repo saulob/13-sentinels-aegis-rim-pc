@@ -109,6 +109,24 @@ function Invoke-PromptArt {
     return Result 'PASS' '' $notes
 }
 
+function Invoke-BugReportService {
+    $node = Get-Command node -ErrorAction SilentlyContinue
+    if (-not $node) { return Result 'SKIPPED' 'Node.js 22 or newer not found' }
+    $request = Join-Path $buildDir 'bin\bug-report-request.json'
+    if (-not (Test-Path -LiteralPath $request)) { return Result 'FAIL' 'the launcher test did not leave its request (bin\bug-report-request.json)' }
+    $folder = Join-Path $root 'server\13-sentinels-bug-reports'
+    $env:TSR_CPP_REQUEST = $request
+    Push-Location $folder
+    try { $run = Invoke-Native { & $node.Source '--test' '--test-reporter=tap' 'test/*.test.js' } } finally { Pop-Location; Remove-Item Env:\TSR_CPP_REQUEST -ErrorAction SilentlyContinue }
+    $summary = @($run.Lines | Where-Object { $_ -match '^# (tests|pass|fail) ' })
+    if ($run.Code -ne 0) {
+        $run.Lines | Where-Object { $_ -match '^\s*not ok|Error' } | Select-Object -First 12 | ForEach-Object { Write-Host "    $_" }
+        return Result 'FAIL' "node --test exited with $($run.Code)"
+    }
+    $summary | ForEach-Object { Write-Host "    $_" -ForegroundColor DarkGray }
+    return Result 'PASS'
+}
+
 function Invoke-Script([string]$Relative) {
     $run = Invoke-Native { & powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File (Join-Path $root $Relative) }
     if ($run.Code -ne 0) {
@@ -129,6 +147,8 @@ $steps = @(
     (Step 'Packages' 'identities 1.00/1.01/1.02, real packages, installs, highest-version precedence, update removal, isolation, voice banks, boot images, prompt art export' 'tsr-game-profile-tests'),
     (Step 'Packages' 'Xbox prompt art coverage (Python, on the entries the step above exported)' -Block { Invoke-PromptArt }),
     (Step 'Launcher' 'tsr.ini persistence, validation, launcher gate, keys, languages, window sizes' 'tsr-launcher-tests'),
+    (Step 'Launcher' 'Bug Report: JSON, service address, log choice, privacy filter, report and preview, client against a stand-in transport, My Reports, nothing sent on its own' 'tsr-bug-report-tests'),
+    (Step 'Launcher' 'Bug Report service (Node, disposable database): submission, receipts, limits, retention, admin, dashboard, and the launcher''s own request' -Block { Invoke-BugReportService }),
     (Step 'Launcher' 'windowed-mode size and centring' 'tsr-window-tests'),
     (Step 'Launcher' 'SDL gamepad defaults' 'tsr-sdl-compat-tests'),
     (Step 'Features' 'Skip Intro hook sites, refusals, hook run on synthetic code' 'tsr-game-hook-tests'),

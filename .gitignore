@@ -50,3 +50,7 @@ eboot.bin
 /gpu/third_party/magic_enum/
 /gpu/third_party/miniz/
 /gpu/third_party/xbyak/
+
+# Bug report service: Wrangler state and Node modules
+/server/**/.wrangler/
+/server/**/node_modules/
