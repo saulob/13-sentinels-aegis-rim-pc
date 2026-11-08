@@ -17,6 +17,7 @@
 #include "tsr_resolution.h"
 #include "runtime_log.h"
 #include "isa_emulate.h"
+#include "lzcnt_compat.h"
 #include "exit_game.h"
 #include "skip_intro.h"
 #if !defined(__x86_64__) || !defined(__GNUC__)
@@ -125,7 +126,7 @@ static int cpu_usable(char *cause, size_t cause_size, char *advice, size_t advic
     char missing[96];
     if (!isa_missing_sets(isa_host_features(),0,missing,sizeof(missing))) return 1;
     snprintf(cause,cause_size,"This processor lacks %s, which the game's PS4 code needs.",missing);
-    snprintf(advice,advice_size,"The game needs an Intel Core 4th generation (Haswell), AMD FX or newer processor.");
+    snprintf(advice,advice_size,"The game needs an Intel Core 2nd generation (Sandy Bridge), AMD FX or newer processor.");
     return 0;
 }
 #ifndef _WIN32
@@ -710,7 +711,9 @@ int main(int argc, char **argv) {
         }
     }
     /* The hook stubs follow the image, within a jump of it. */
-    const size_t hook_bytes = round_page(skip_intro_stub_bytes() + exit_game_stub_bytes());
+    const int lzcnt_rewrite = lzcnt_compat_needed(isa_host_features()) || getenv("TSR_EMULATE_LZCNT");
+    const size_t lzcnt_stub_bytes = lzcnt_rewrite ? lzcnt_compat_stub_bytes() : 0;
+    const size_t hook_bytes = round_page(skip_intro_stub_bytes() + exit_game_stub_bytes() + lzcnt_stub_bytes);
     image = allocate(round_page(size) + hook_bytes);
     uint8_t *const hook_stubs = image + round_page(size);
     if (fread(image, 1, size, f) != size || fgetc(f) != EOF) fail("incorrect memory image size");
@@ -808,6 +811,18 @@ int main(int argc, char **argv) {
     printf("Render resolution: requested %s (%dx%d), effective %s, main render target %dx%d%s\n",
            requested_resolution->key,requested_resolution->width,requested_resolution->height,render_resolution->key,
            render_resolution->width,render_resolution->height,render_resolution->pro_memory ? ", PS4 Pro path" : "");
+    if (lzcnt_rewrite) {
+        const LzcntBuild *rewritten=NULL;
+        const LzcntCompatStatus status=lzcnt_compat_install(image,size,entry,
+            hook_stubs+skip_intro_stub_bytes()+exit_game_stub_bytes(),lzcnt_stub_bytes,&rewritten);
+        if (status!=LZCNT_COMPAT_OK) {
+            char message[330];
+            snprintf(message,sizeof(message),"This processor lacks LZCNT, and this game executable cannot be adapted to it: %s.",
+                     lzcnt_compat_status_text(status));
+            fail_running(message);
+        }
+        printf("LZCNT: rewritten at %zu sites (%s)\n",rewritten->count,rewritten->build);
+    }
     const char *verified_build=known_build ? build_key : NULL;
     if (skip_intro_wanted)
         skip_intro_install(image,size,entry,verified_build,hook_stubs,skip_intro_stub_bytes());

@@ -57,8 +57,9 @@ services (NpTus, Matching2, Score, WebApi). An unbound import stops the game onl
 
 Every Dragon's Crown game-specific patch, hook, offset and fingerprint (resolution sites, ultrawide, skip intro and
 offers, gallery, menu buttons, NPC voices, exit-game row, title layout, LZCNT rewrite sites), the DC water and ultrawide
-renderer workarounds, the controller prompt and translation patches, online play, cheats, Discord presence and the
-self-updater. Without an LZCNT rewrite for this executable, the processor must support LZCNT (Intel Haswell, AMD FX or newer).
+renderer workarounds, the controller prompt and translation patches, online play, cheats and Discord presence. The
+self-updater is carried over for this repository's releases (docs\RELEASE_SECURITY.md). The LZCNT rewrite itself is carried over with sites of its own for 1.00, 1.01 and 1.02, used on a
+processor without LZCNT (Intel Sandy Bridge, Ivy Bridge); `TSR_EMULATE_LZCNT=1` forces it on one that has LZCNT.
 
 ## Unknown until the first boot
 

@@ -14,7 +14,8 @@
   test works on a copy in the build folder. TSR_TEST_PACKAGES names a folder with the real USA packages, which are only
   opened; TSR_TEST_INSTALL adds a full install into that folder.
 .PARAMETER Group
-  Runtime, SaveData, Packages, Launcher, Features, Audio, Video, Graphics, Imports, or All (the default). Several can be given.
+  Runtime, CPU, SaveData, Packages, Launcher, Updater, Features, Audio, Video, Graphics, Imports, or All (the default).
+  Several can be given.
 .PARAMETER TimeoutSeconds
   Fails a test that runs longer than this.
 .EXAMPLE
@@ -31,7 +32,7 @@ param(
 . (Join-Path $PSScriptRoot '_common.ps1')
 $root = $script:RepoRoot
 $buildDir = Join-Path $root 'build\cmake\clang64'
-$groupOrder = @('Runtime', 'SaveData', 'Packages', 'Launcher', 'Features', 'Audio', 'Video', 'Graphics', 'Imports')
+$groupOrder = @('Runtime', 'CPU', 'SaveData', 'Packages', 'Launcher', 'Updater', 'Features', 'Audio', 'Video', 'Graphics', 'Imports')
 # powershell -File passes "-Group A,B" as one string.
 $Group = @($Group | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim() } | Where-Object { $_ })
 foreach ($name in $Group) {
@@ -161,6 +162,7 @@ $steps = @(
     (Step 'Runtime' 'guest memory (sparse backing, commitment, aliases, release)' 'tsr-memory-windows-tests'),
     (Step 'Runtime' 'log rotation and closed standard streams' 'tsr-log-tests'),
     (Step 'Runtime' 'crash report module history' 'tsr-module-history-tests'),
+    (Step 'CPU' 'MOVBE and BMI1 emulation, CPU requirements, LZCNT rewrite of every site against the processor and on the real 1.00/1.01/1.02 images' 'tsr-isa-tests'),
     (Step 'SaveData' 'mounts, files, handles, errors, interrupted writes, metadata, user save copy' 'tsr-savedata-tests'),
     (Step 'Packages' 'identities 1.00/1.01/1.02, real packages, installs, highest-version precedence, update removal, isolation, voice banks, boot images, prompt art export' 'tsr-game-profile-tests'),
     (Step 'Packages' 'Xbox prompt art coverage (Python, on the entries the step above exported)' -Block { Invoke-PromptArt }),
@@ -170,6 +172,9 @@ $steps = @(
     (Step 'Launcher' 'Bug Report service (Node, disposable database): submission, receipts, limits, retention, admin, dashboard, and the launcher''s own request' -Block { Invoke-BugReportService }),
     (Step 'Launcher' 'windowed-mode size and centring' 'tsr-window-tests'),
     (Step 'Launcher' 'SDL gamepad defaults' 'tsr-sdl-compat-tests'),
+    (Step 'Updater' 'versions, release JSON, SHA-256, ZIP safety, staging, protected game and user data, jobs, install, rollback, the 13S release contract' 'tsr-update-tests'),
+    (Step 'Updater' 'loopback HTTP server only: 404, 500, 504, dropped and stalled transfers, cancellation, redirects, address policy, retries' 'tsr-update-network-tests'),
+    (Step 'Updater' 'trg-updater.exe end to end on temporary folders: waits for its parent, installs, restarts a marker program' 'tsr-update-helper-tests'),
     (Step 'Features' 'Skip Intro hook sites, refusals, hook run on synthetic code' 'tsr-game-hook-tests'),
     (Step 'Features' 'Exit Game: label data, texture and layout patches, hooks, sites and install on the real 1.00/1.01/1.02 images' 'tsr-exit-game-tests'),
     (Step 'Features' 'Exit Game on the real title files of the five languages (Python, game\prepared)' -Block { Invoke-ExitGameLayout }),

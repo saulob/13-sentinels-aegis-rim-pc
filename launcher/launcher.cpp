@@ -50,6 +50,8 @@
 #include "settings.h"
 #include "shift_key.h"
 #include "trophy_page.h"
+#include "update_config.h"
+#include "updater/update_ui.h"
 #include "utf8.h"
 
 #ifndef TSR_PORT_VERSION
@@ -347,6 +349,8 @@ public:
         incident_page_ = std::make_unique<IncidentPage>(IncidentPlaces());
         trg::SetTranslator(&TranslateLauncherText);
         launcher_ = std::make_unique<trg::Launcher>(MakeConfig());
+        updater_ = std::make_unique<trg::update::UpdateController>(MakeUpdateConfig(InstallDir()));
+        updater_->StartCheck();
 
         outcome = Outcome::kRunning;
         host_.BeginFrame();
@@ -386,6 +390,13 @@ public:
         if (!skip_finish_save_) {
             SavePlacement(placement_.Flush());
         }
+        if (updater_) {
+            updater_->Cancel();
+            if (updater_->Busy()) {
+                // Do not join a network call on the UI thread when the launcher leaves.
+                updater_.release();
+            }
+        }
         launcher_.reset();
         trophy_page_.reset();
         host_.Close();
@@ -399,6 +410,7 @@ private:
         PollInstall();
         PollPrompts();
         PollPromptsRefresh();
+        PollUpdate();
         NormalizeGraphicsCard();
         NormalizeGraphicsSettings();
         if (play_.starting() && ImGui::GetTime() - play_started_ >= kPlayFeedbackSeconds) {
@@ -423,6 +435,12 @@ private:
         ImGui::BeginDisabled(play_.starting());
         const trg::Result result = launcher_->Frame();
         ImGui::EndDisabled();
+        if (result == trg::Result::kNone && !play_.starting()) {
+            if (HandleUpdateAction(
+                    trg::update::DrawUpdateBanner(updater_->snapshot(), launcher_->config().theme, fonts_))) {
+                return Outcome::kQuit;
+            }
+        }
         if (const std::optional<std::filesystem::path> picked = browser_.Draw(fonts_.regular, fonts_.size, LauncherTheme())) {
             StartInstall(Utf8(*picked), browsing_for_);
         }
@@ -448,6 +466,60 @@ private:
     std::filesystem::path InstallDir() const {
         const std::filesystem::path executable = CurrentExecutablePath();
         return executable.has_parent_path() ? executable.parent_path() : std::filesystem::current_path();
+    }
+
+    void PollUpdate() {
+        if (updater_) {
+            updater_->Poll();
+        }
+    }
+
+    // The helper replaces this installation's programs once this process exits; a running game still holds them.
+    bool InstallBlocked() {
+        if (install_.running() || prompts_.running()) {
+            launcher_->SetStatus("Wait for the current install to finish.", 5.0);
+            return true;
+        }
+        if (OtherProcessRunning(CurrentExecutablePath())) {
+            launcher_->SetStatus("Close the game before installing the update.", 6.0);
+            return true;
+        }
+        return false;
+    }
+
+    bool HandleUpdateAction(trg::update::UpdateUiAction action) {
+        switch (action) {
+        case trg::update::UpdateUiAction::kDownload:
+            updater_->StartDownload();
+            break;
+        case trg::update::UpdateUiAction::kRetry:
+            if (updater_->RetryNeedsInstall()) {
+                if (InstallBlocked() || !launcher_->Save()) {
+                    break;
+                }
+                SavePlacement(placement_.Flush());
+                if (updater_->Retry()) {
+                    skip_finish_save_ = true;
+                    return true;
+                }
+            } else {
+                updater_->Retry();
+            }
+            break;
+        case trg::update::UpdateUiAction::kRestart:
+            if (InstallBlocked() || !launcher_->Save()) {
+                break;
+            }
+            SavePlacement(placement_.Flush());
+            if (updater_->BeginInstall()) {
+                skip_finish_save_ = true;
+                return true;
+            }
+            break;
+        case trg::update::UpdateUiAction::kNone:
+            break;
+        }
+        return false;
     }
 
     // PLAY saves the settings once here, then starts the transition. A failed save keeps the launcher open.
@@ -1310,6 +1382,7 @@ private:
     std::vector<std::string> gpu_names_;
     trg::Fonts fonts_;
     std::unique_ptr<trg::Launcher> launcher_;
+    std::unique_ptr<trg::update::UpdateController> updater_;
     std::unique_ptr<TrophyPage> trophy_page_;
     std::unique_ptr<IncidentPage> incident_page_;
     PlayGate play_;

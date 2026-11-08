@@ -68,6 +68,11 @@ deployed the page says it is unavailable and offers to save the same report to `
 [docs/BUG_REPORTS.md](docs/BUG_REPORTS.md); the service is in
 [server/13-sentinels-bug-reports](server/13-sentinels-bug-reports/README.md).
 
+**Port updates.** The launcher checks this repository's latest GitHub release once per start and, for a newer one,
+shows a banner; it installs only when you choose UPDATE NOW and RESTART TO UPDATE, and not while the game is running.
+`trg-updater.exe` replaces only the port's own files after checking the package's SHA-256, and restores them if
+anything fails. Game files, the `user` folder and logs are kept. See [docs/RELEASE_SECURITY.md](docs/RELEASE_SECURITY.md).
+
 **Languages.** Text Language (menus and subtitles: English, French, German, Italian, Spanish) is a launcher choice and is
 kept as chosen: a language a version lacks shows the nearest supported one and the choice stays. Voice Language is shown
 for information only: 1.00 has the Japanese voices only; 1.01 and 1.02 ship the English ones too (`ROBO_PATCH_US.CPK`) and
@@ -85,7 +90,8 @@ Windows 10 1903+ with [MSYS2](https://www.msys2.org/) CLANG64:
 .\tools\test.ps1               # focused headless tests
 ```
 
-The output is `build\cmake\clang64\bin\13_sentinels_aegis_rim.exe` and `13_sentinels_launcher.exe`. The PC port
+The output is `build\cmake\clang64\bin\13_sentinels_aegis_rim.exe`, `13_sentinels_launcher.exe` and the update helper
+`trg-updater.exe`. The PC port
 version has one source of truth: `project(... VERSION ...)` in `CMakeLists.txt`.
 
 ## Layout

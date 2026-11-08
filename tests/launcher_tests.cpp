@@ -9,11 +9,22 @@
 #include <sstream>
 #include <string>
 
+#include "game_process.h"
 #include "game_profile.h"
 #include "language_support.h"
 #include "options.h"
 #include "settings.h"
 #include "tsr_keys.h"
+
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
 
 namespace fs = std::filesystem;
 using namespace tsr;
@@ -256,9 +267,37 @@ void TestWindowSizes() {
     CHECK(sizes[2] == kGamePictureSize);
 }
 
+// The update install waits while another process runs this installation's program, such as the game.
+void TestOtherProcessRunning() {
+    const fs::path self = tsr::CurrentExecutablePath();
+    CHECK(!tsr::OtherProcessRunning(self));
+    CHECK(!tsr::OtherProcessRunning(self.parent_path() / "not-running.exe"));
+#ifdef _WIN32
+    std::wstring command = L"\"" + self.wstring() + L"\" --hold";
+    STARTUPINFOW startup{};
+    startup.cb = sizeof(startup);
+    PROCESS_INFORMATION process{};
+    CHECK(CreateProcessW(self.c_str(), command.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr, nullptr,
+                         &startup, &process));
+    if (process.hProcess) {
+        CHECK(tsr::OtherProcessRunning(self));
+        CHECK(WaitForSingleObject(process.hProcess, 10000) == WAIT_OBJECT_0);
+        CHECK(!tsr::OtherProcessRunning(self));
+        CloseHandle(process.hThread);
+        CloseHandle(process.hProcess);
+    }
+#endif
+}
+
 } // namespace
 
-int main() {
+int main(int argc, char** argv) {
+    if (argc > 1 && std::string(argv[1]) == "--hold") {
+#ifdef _WIN32
+        Sleep(1500);
+#endif
+        return 0;
+    }
     const fs::path scratch = fs::temp_directory_path() / "tsr-launcher-tests";
     std::error_code ec;
     fs::remove_all(scratch, ec);
@@ -272,6 +311,7 @@ int main() {
     TestNoVersionSwitchingUi();
     TestPromptsRefreshIsAsync();
     TestWindowSizes();
+    TestOtherProcessRunning();
     fs::remove_all(scratch, ec);
     std::printf("launcher: %d checks, %d failed\n", checks, failures);
     return failures ? 1 : 0;

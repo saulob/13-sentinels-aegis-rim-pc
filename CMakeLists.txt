@@ -101,8 +101,8 @@ set(TSR_EXIT_GAME_LABELS ${CMAKE_SOURCE_DIR}/assets/exit_game/title-labels.bin)
 set_source_files_properties(src/exit_game_data.c PROPERTIES
     COMPILE_DEFINITIONS "TSR_EXIT_GAME_LABELS_PATH=\"${TSR_EXIT_GAME_LABELS}\""
     OBJECT_DEPENDS "${TSR_EXIT_GAME_LABELS}")
-add_executable(tsr_game WIN32 src/loader.c src/isa_emulate.c src/compat_win.c src/module_diagnostics.c src/module_history.c
-    src/call_site.c src/runtime_log.c src/13_sentinels_aegis_rim.rc ${TSR_RUNTIME_SOURCES} ${TSR_HOOK_SOURCES})
+add_executable(tsr_game WIN32 src/loader.c src/isa_emulate.c src/lzcnt_compat.c src/compat_win.c src/module_diagnostics.c
+    src/module_history.c src/call_site.c src/runtime_log.c src/13_sentinels_aegis_rim.rc ${TSR_RUNTIME_SOURCES} ${TSR_HOOK_SOURCES})
 set_target_properties(tsr_game PROPERTIES OUTPUT_NAME "13_sentinels_aegis_rim")
 target_include_directories(tsr_game PRIVATE src launcher gpu/shim ${CMAKE_BINARY_DIR}/generated)
 target_compile_options(tsr_game PRIVATE $<$<COMPILE_LANGUAGE:C>:-Wall -Wextra -Werror -fno-omit-frame-pointer>)
@@ -121,6 +121,9 @@ target_include_directories(tsr_launcher_entry PRIVATE ${CMAKE_BINARY_DIR}/genera
 target_compile_options(tsr_launcher_entry PRIVATE -Wall -Wextra -Werror)
 target_link_options(tsr_launcher_entry PRIVATE -static)
 add_dependencies(tsr_game tsr_launcher_entry)
+if (WIN32)
+    add_dependencies(tsr_game trg-updater)
+endif()
 
 # The launcher reads its images next to the executable.
 add_custom_command(TARGET tsr_game POST_BUILD
@@ -149,6 +152,8 @@ target_link_options(tsr-memory-windows-tests PRIVATE -Wl,--disable-high-entropy-
 tsr_add_test(tsr-log-tests tests/log_tests.c src/runtime_log.c src/runtime_session_log.c)
 tsr_add_test(tsr-game-hook-tests tests/game_hook_tests.c ${TSR_HOOK_SOURCES})
 tsr_add_test(tsr-exit-game-tests tests/exit_game_tests.c ${TSR_HOOK_SOURCES})
+tsr_add_test(tsr-isa-tests tests/isa_tests.c src/isa_emulate.c src/lzcnt_compat.c)
+target_compile_options(tsr-isa-tests PRIVATE -Werror)
 tsr_add_test(tsr-module-history-tests tests/module_history_tests.c src/module_history.c src/call_site.c src/startup_phase.c)
 tsr_add_test(tsr-sdl-compat-tests tests/sdl_compat_tests.cpp)
 tsr_add_test(tsr-window-tests tests/window_fit_tests.cpp)

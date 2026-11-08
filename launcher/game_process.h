@@ -36,4 +36,7 @@ std::wstring WindowsCommandLine(const std::filesystem::path& executable, const s
 bool CreateGameProcess(const std::filesystem::path& executable, const std::vector<std::string>& arguments,
                        std::string& error);
 
+// Whether a process other than this one runs `executable`, such as a game this launcher started earlier.
+bool OtherProcessRunning(const std::filesystem::path& executable);
+
 } // namespace tsr

@@ -71,10 +71,64 @@ endforeach()
 target_include_directories(tsr_launcher_core PRIVATE ${PROJECT_SOURCE_DIR}/gpu/shim)
 
 add_library(tsr_launcher STATIC host.cpp incident_page.cpp launcher.cpp my_reports_page.cpp package_browser.cpp problem_dialog.cpp
-    shift_key.cpp trophy_page.cpp)
+    shift_key.cpp trophy_page.cpp update_config.cpp
+    updater/github_release.cpp updater/json.cpp updater/sha256.cpp updater/third_party/miniz/miniz.c
+    updater/update_controller.cpp updater/update_job.cpp updater/update_paths.cpp updater/update_platform.cpp
+    updater/update_ui.cpp updater/update_zip.cpp updater/version.cpp)
+set_source_files_properties(updater/third_party/miniz/miniz.c PROPERTIES COMPILE_OPTIONS "-w")
 target_compile_definitions(tsr_launcher PRIVATE TSR_PORT_VERSION="${PROJECT_VERSION}")
 target_include_directories(tsr_launcher PRIVATE ${PROJECT_SOURCE_DIR}/gpu/shim)
 target_link_libraries(tsr_launcher PUBLIC tsr_launcher_core trg_launcher tsr_imgui_sdl ${CMAKE_DL_LIBS})
+
+# Windows helper that replaces the port's files after the launcher exits.
+if (WIN32)
+    add_executable(trg-updater WIN32 updater/helper_main.cpp updater/install_transaction.cpp updater/sha256.cpp
+        updater/update_job.cpp updater/update_paths.cpp updater/update_platform.cpp)
+    target_include_directories(trg-updater PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(trg-updater PRIVATE shell32)
+    target_link_options(trg-updater PRIVATE -static)
+    set_target_properties(trg-updater PROPERTIES OUTPUT_NAME "trg-updater" CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON
+        CXX_EXTENSIONS OFF)
+    target_compile_options(trg-updater PRIVATE -Wall -Wextra)
+
+    add_executable(tsr-update-restart-marker EXCLUDE_FROM_ALL WIN32 ../tests/update_restart_marker.cpp)
+    target_link_libraries(tsr-update-restart-marker PRIVATE shell32)
+    target_link_options(tsr-update-restart-marker PRIVATE -static)
+    set_target_properties(tsr-update-restart-marker PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON
+        CXX_EXTENSIONS OFF)
+
+    add_executable(tsr-update-helper-tests EXCLUDE_FROM_ALL ../tests/update_helper_tests.cpp)
+    target_compile_definitions(tsr-update-helper-tests PRIVATE
+        TSR_UPDATER_EXE="$<TARGET_FILE:trg-updater>"
+        TSR_MARKER_EXE="$<TARGET_FILE:tsr-update-restart-marker>")
+    add_dependencies(tsr-update-helper-tests trg-updater tsr-update-restart-marker)
+    set_target_properties(tsr-update-helper-tests PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON
+        CXX_EXTENSIONS OFF)
+    target_compile_options(tsr-update-helper-tests PRIVATE -Wall -Wextra)
+endif()
+
+# Focused updater tests: versions, release JSON, SHA-256, ZIP safety, staging, jobs, rollback and the 13S release
+# contract; no network.
+add_executable(tsr-update-tests EXCLUDE_FROM_ALL ../tests/update_tests.cpp update_config.cpp
+    updater/github_release.cpp updater/install_transaction.cpp updater/json.cpp updater/sha256.cpp
+    updater/update_job.cpp updater/update_paths.cpp updater/update_platform.cpp updater/update_zip.cpp
+    updater/version.cpp updater/third_party/miniz/miniz.c)
+target_include_directories(tsr-update-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_compile_definitions(tsr-update-tests PRIVATE TSR_SOURCE_DIR="${PROJECT_SOURCE_DIR}"
+    TSR_UPDATER_SRC_DIR="${CMAKE_CURRENT_SOURCE_DIR}" TSR_PORT_VERSION="${PROJECT_VERSION}")
+target_link_libraries(tsr-update-tests PRIVATE trg_core shell32)
+set_target_properties(tsr-update-tests PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
+target_compile_options(tsr-update-tests PRIVATE -Wall -Wextra)
+
+# Update failures against a scripted loopback HTTP server: 504, dropped connections, stalls, redirects and retries.
+add_executable(tsr-update-network-tests EXCLUDE_FROM_ALL ../tests/update_network_tests.cpp
+    updater/github_release.cpp updater/install_transaction.cpp updater/json.cpp updater/sha256.cpp
+    updater/update_controller.cpp updater/update_job.cpp updater/update_paths.cpp updater/update_platform.cpp
+    updater/update_zip.cpp updater/version.cpp updater/third_party/miniz/miniz.c)
+target_include_directories(tsr-update-network-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(tsr-update-network-tests PRIVATE trg_core shell32 ws2_32)
+set_target_properties(tsr-update-network-tests PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
+target_compile_options(tsr-update-network-tests PRIVATE -Wall -Wextra)
 
 set_target_properties(tsr_launcher_core tsr_launcher PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
 target_compile_options(tsr_launcher_core PRIVATE -Wall -Wextra)

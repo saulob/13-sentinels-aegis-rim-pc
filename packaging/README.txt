@@ -29,8 +29,9 @@ This is an early development release: the game has not been verified to boot.
 REQUIREMENTS
 ------------
 - Windows 10 version 1903 or later, or Windows 11, 64-bit
-- A processor with AVX and LZCNT: Intel Core 4th generation (Haswell), AMD FX
-  or newer. MOVBE and BMI1 are handled in software where they are missing.
+- A processor with AVX: Intel Core 2nd generation (Sandy Bridge), AMD FX or
+  newer. The LZCNT, MOVBE and BMI1 instructions some of these lack are handled
+  in software.
 - A graphics card and driver with Vulkan 1.3, VK_EXT_robustness2,
   VK_KHR_push_descriptor and VK_EXT_vertex_attribute_divisor
 - Your own 13 Sentinels: Aegis Rim package, plus about 4.5 GB of free disk space
@@ -52,6 +53,16 @@ INSTALL
 To repair the game files, use "Reinstall game..." on the Play page. Your
 settings and saves are kept. If an installation fails or is cancelled, the
 previous one is left as it was.
+
+
+PORT UPDATES
+------------
+The launcher checks the project's GitHub releases once per start. When a newer
+release of the port exists, an update banner appears in the header; nothing is
+installed until you choose UPDATE NOW and then RESTART TO UPDATE. Close the
+game first. The update replaces only the port's own program files. Game files,
+user data, saves, settings, trophies, logs and shader caches are kept. If the
+update cannot be installed, the previous files are restored.
 
 
 WINDOWS SMARTSCREEN

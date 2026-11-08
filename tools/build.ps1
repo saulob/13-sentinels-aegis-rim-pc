@@ -1,6 +1,7 @@
 <#
 .SYNOPSIS
-  Builds 13_sentinels_aegis_rim.exe and 13_sentinels_launcher.exe incrementally (MSYS2 CLANG64, CMake + Ninja). -Run launches it.
+  Builds 13_sentinels_aegis_rim.exe, 13_sentinels_launcher.exe and trg-updater.exe incrementally (MSYS2 CLANG64, CMake +
+  Ninja). -Run launches it.
 .DESCRIPTION
   Reuses what is current and updates only what is stale: the video core dependencies (gpu\deps.txt), the pinned ANGLE
   runtime (gpu\angle-runtime.txt, cached in cache\deps), the CMake configuration and, once the game is installed, its boot

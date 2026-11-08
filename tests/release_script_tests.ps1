@@ -41,7 +41,7 @@ function Test-ReleaseSecurity {
 
     $hasUpdater = (Test-Path -LiteralPath (Join-Path $root 'launcher\updater')) -or ($rootExes | Where-Object { $_ -match 'updater' })
     if ($hasUpdater) {
-        Check ($hashed | Where-Object { $_ -match 'updater' }) 'an updater the project ships is hashed'
+        Check ([bool]($hashed | Where-Object { $_ -match 'updater' })) 'an updater the project ships is hashed'
     } else {
         Check (-not ($hashed | Where-Object { $_ -match 'updater' })) 'no updater hash is printed: the project ships no updater'
         Check ($package -notmatch 'trg-updater' -and $security -notmatch 'trg-updater') 'no updater is named in the package script or the notes'

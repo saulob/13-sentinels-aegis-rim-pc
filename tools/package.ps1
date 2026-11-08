@@ -3,13 +3,13 @@
   Packages the tested build as dist\13SentinelsAegisRimPC-v<version>-windows-x64 (folder, ZIP and .zip.sha256). Local only:
   nothing is published, tagged or uploaded. It prints the SHA-256 of the ZIP and of each executable in it.
 .DESCRIPTION
-  Builds with tools\build.ps1 (the one RelWithDebInfo configuration) unless -SkipBuild, then stages 13_sentinels_aegis_rim.exe
-  and 13_sentinels_launcher.exe without their debug information, the MSYS2 DLLs it loads (found by walking its imports), README.txt, LICENSE.txt and
+  Builds with tools\build.ps1 (the one RelWithDebInfo configuration) unless -SkipBuild, then stages 13_sentinels_aegis_rim.exe,
+  13_sentinels_launcher.exe and trg-updater.exe without their debug information, the MSYS2 DLLs it loads (found by walking its imports), README.txt, LICENSE.txt and
   the licence texts. The debug information goes to dist\<name>-symbols\, which is not packaged.
   The staging folder is checked for game data, user files, local paths and anything unexpected before the ZIP is
   written. The version is the project VERSION in CMakeLists.txt.
 .PARAMETER SkipBuild
-  Packages the existing build\cmake\clang64\bin\13_sentinels_aegis_rim.exe and 13_sentinels_launcher.exe.
+  Packages the existing build\cmake\clang64\bin\13_sentinels_aegis_rim.exe, 13_sentinels_launcher.exe and trg-updater.exe.
 .PARAMETER Clean
   Passes -Clean to tools\build.ps1.
 .PARAMETER VerifyOnly
@@ -29,7 +29,8 @@ param(
 
 $root = $script:RepoRoot
 $loader = Join-Path $root 'build\cmake\clang64\bin\13_sentinels_aegis_rim.exe'
-$updater = Join-Path $root 'build\cmake\clang64\bin\13_sentinels_launcher.exe'
+$launcherEntry = Join-Path $root 'build\cmake\clang64\bin\13_sentinels_launcher.exe'
+$updater = Join-Path $root 'build\cmake\clang64\bin\trg-updater.exe'
 $tc = Resolve-Toolchain 'auto'
 $bin = $tc.Bin
 $prefix = Split-Path $bin -Parent
@@ -71,7 +72,10 @@ $AngleLicenceSha256 = ($AnglePin.Files | Where-Object { $_.Name -eq 'LICENSE' })
 # The licence folders of what libGLESv2.dll has compiled in.
 $AngleLinkedLicences = @('spirv-tools', 'vulkan-loader', 'VulkanMemoryAllocator', 'xxhash')
 
-$RootFiles = @('13_sentinels_aegis_rim.exe', '13_sentinels_launcher.exe', 'README.txt', 'LICENSE.txt')
+$Programs = @('13_sentinels_aegis_rim.exe', '13_sentinels_launcher.exe', 'trg-updater.exe')
+$RootFiles = @('13_sentinels_aegis_rim.exe', '13_sentinels_launcher.exe', 'trg-updater.exe', 'README.txt', 'LICENSE.txt')
+# The installed updater refuses a later package without these (required_staged_files in launcher\update_config.cpp).
+$UpdaterRequiredFiles = @('13_sentinels_aegis_rim.exe', '13_sentinels_launcher.exe', 'trg-updater.exe', 'SDL3.dll', 'libc++.dll')
 $AssetFiles = @('assets\launcher\header-art.png', 'assets\launcher\sponsor-heart.png')
 $ForbiddenNames = @('game', 'user', 'logs', 'cache', 'build', 'prepared', 'extracted', 'image', 'sce_sys', 'sce_module',
     'eboot.bin', 'param.sfo', 'tsr.ini', 'boot.bin', 'content.bin', 'image.json', 'imports.json', 'symbols')
@@ -126,11 +130,12 @@ function Test-ReleaseFolder([string]$Dir) {
     if (-not (Test-Path -LiteralPath $Dir -PathType Container)) { Stop-Tool "Not a folder: $Dir" }
     $base = (Resolve-Path -LiteralPath $Dir).Path.TrimEnd('\')
     $exe = Join-Path $base '13_sentinels_aegis_rim.exe'
-    $updaterExe = Join-Path $base '13_sentinels_launcher.exe'
     $dlls = if (Test-Path -LiteralPath $exe) { Get-DllClosure $exe $base $objdump } else { [ordered]@{} }
-    if (Test-Path -LiteralPath $updaterExe) {
-        $updaterDlls = Get-DllClosure $updaterExe $base $objdump
-        foreach ($dllName in $updaterDlls.Keys) { if (-not $dlls.Contains($dllName)) { $dlls[$dllName] = $updaterDlls[$dllName] } }
+    foreach ($program in $Programs | Select-Object -Skip 1) {
+        $path = Join-Path $base $program
+        if (-not (Test-Path -LiteralPath $path)) { continue }
+        $programDlls = Get-DllClosure $path $base $objdump
+        foreach ($dllName in $programDlls.Keys) { if (-not $dlls.Contains($dllName)) { $dlls[$dllName] = $programDlls[$dllName] } }
     }
     foreach ($file in Get-AngleDlls $AnglePin) {
         $path = Join-Path $base $file.Name
@@ -142,13 +147,10 @@ function Test-ReleaseFolder([string]$Dir) {
     foreach ($folder in $AngleLinkedLicences) {
         if (-not (Get-ChildItem -LiteralPath (Join-Path $base "licenses\$folder") -File -ErrorAction SilentlyContinue)) { $problems.Add("missing licence: licenses\$folder") }
     }
-    if (Test-Path -LiteralPath $exe) {
-        foreach ($name in (Get-DllClosure $exe $bin $objdump).Keys) {
-            if (-not $dlls.Contains($name)) { $problems.Add("missing DLL: $name") }
-        }
-    }
-    if (Test-Path -LiteralPath $updaterExe) {
-        foreach ($name in (Get-DllClosure $updaterExe $bin $objdump).Keys) {
+    foreach ($program in $Programs) {
+        $path = Join-Path $base $program
+        if (-not (Test-Path -LiteralPath $path)) { continue }
+        foreach ($name in (Get-DllClosure $path $bin $objdump).Keys) {
             if (-not $dlls.Contains($name)) { $problems.Add("missing DLL: $name") }
         }
     }
@@ -194,6 +196,9 @@ function Test-ReleaseFolder([string]$Dir) {
     foreach ($asset in $AssetFiles) {
         if (-not (Test-Path -LiteralPath (Join-Path $base $asset) -PathType Leaf)) { $problems.Add("missing: $asset") }
     }
+    foreach ($required in $UpdaterRequiredFiles) {
+        if (-not (Test-Path -LiteralPath (Join-Path $base $required) -PathType Leaf)) { $problems.Add("missing for the updater: $required") }
+    }
     return $problems
 }
 
@@ -232,6 +237,7 @@ if (-not $SkipBuild) {
     if ($LASTEXITCODE -ne 0) { Stop-Tool 'Build failed' }
 }
 if (-not (Test-Path -LiteralPath $loader)) { Stop-Tool "Missing $loader (run without -SkipBuild)" }
+if (-not (Test-Path -LiteralPath $launcherEntry)) { Stop-Tool "Missing $launcherEntry (run without -SkipBuild)" }
 if (-not (Test-Path -LiteralPath $updater)) { Stop-Tool "Missing $updater (run without -SkipBuild)" }
 $built = (Get-Item -LiteralPath $loader).VersionInfo.ProductVersion
 if ($built -ne $version) { Stop-Tool "13_sentinels_aegis_rim.exe is version $built, CMakeLists.txt says $version (run without -SkipBuild)" }
@@ -251,17 +257,26 @@ if ($LASTEXITCODE -ne 0) { Stop-Tool 'llvm-objcopy --only-keep-debug failed' }
 if ($LASTEXITCODE -ne 0) { Stop-Tool 'llvm-objcopy --strip-debug failed' }
 
 Write-Step 'Staging 13_sentinels_launcher.exe without debug information'
-$updaterDebug = Join-Path $symbols '13_sentinels_launcher.debug'
-& $objcopy --only-keep-debug $updater $updaterDebug
+$launcherDebug = Join-Path $symbols '13_sentinels_launcher.debug'
+& $objcopy --only-keep-debug $launcherEntry $launcherDebug
 if ($LASTEXITCODE -ne 0) { Stop-Tool 'llvm-objcopy --only-keep-debug failed on 13_sentinels_launcher.exe' }
-& $objcopy --strip-debug "--add-gnu-debuglink=$updaterDebug" $updater (Join-Path $stage '13_sentinels_launcher.exe')
+& $objcopy --strip-debug "--add-gnu-debuglink=$launcherDebug" $launcherEntry (Join-Path $stage '13_sentinels_launcher.exe')
 if ($LASTEXITCODE -ne 0) { Stop-Tool 'llvm-objcopy --strip-debug failed on 13_sentinels_launcher.exe' }
+
+Write-Step 'Staging trg-updater.exe without debug information'
+$updaterDebug = Join-Path $symbols 'trg-updater.debug'
+& $objcopy --only-keep-debug $updater $updaterDebug
+if ($LASTEXITCODE -ne 0) { Stop-Tool 'llvm-objcopy --only-keep-debug failed on trg-updater.exe' }
+& $objcopy --strip-debug "--add-gnu-debuglink=$updaterDebug" $updater (Join-Path $stage 'trg-updater.exe')
+if ($LASTEXITCODE -ne 0) { Stop-Tool 'llvm-objcopy --strip-debug failed on trg-updater.exe' }
 
 Write-Step 'Staging the DLLs it loads'
 $angleRuntime = Sync-AngleRuntime $bin
 $dlls = Get-DllClosure $loader $bin $objdump
-$updaterDlls = Get-DllClosure $updater $bin $objdump
-foreach ($dllName in $updaterDlls.Keys) { if (-not $dlls.Contains($dllName)) { $dlls[$dllName] = $updaterDlls[$dllName] } }
+foreach ($built in @($launcherEntry, $updater)) {
+    $programDlls = Get-DllClosure $built $bin $objdump
+    foreach ($dllName in $programDlls.Keys) { if (-not $dlls.Contains($dllName)) { $dlls[$dllName] = $programDlls[$dllName] } }
+}
 Add-AngleDlls $dlls $angleRuntime $bin
 $owners = [ordered]@{}
 foreach ($dll in $dlls.Values) {
@@ -358,10 +373,10 @@ Write-Host 'RELEASE PACKAGE READY (nothing was published)' -ForegroundColor Gree
 Write-Host "  Folder:   $stage ($(Format-Size $stageBytes), $($files.Count) files)"
 Write-Host "  ZIP:      $zip ($(Format-Size (Get-Item -LiteralPath $zip).Length))"
 Write-Host "  Windows ZIP SHA-256:                $hash"
-foreach ($program in @('13_sentinels_aegis_rim.exe', '13_sentinels_launcher.exe')) {
+foreach ($program in @('13_sentinels_aegis_rim.exe', '13_sentinels_launcher.exe', 'trg-updater.exe')) {
     Write-Host ("  {0} SHA-256: {1}" -f $program.PadRight(28), (Get-FileHash -LiteralPath (Join-Path $stage $program) -Algorithm SHA256).Hash.ToLowerInvariant())
 }
-Write-Host '  VirusTotal: scan the ZIP and both executables separately (docs\RELEASE_SECURITY.md); uploads are manual'
+Write-Host '  VirusTotal: scan the ZIP and the three executables separately (docs\RELEASE_SECURITY.md); uploads are manual'
 Write-Host "  Symbols:  $symbols (not in the package)"
 Write-Host "  Loader:   $(Format-Size (Get-Item -LiteralPath $loader).Length) built, $(Format-Size (Get-Item -LiteralPath (Join-Path $stage '13_sentinels_aegis_rim.exe')).Length) packaged"
 Write-Host "  DLLs:     $($dlls.Count), $(Format-Size $dllBytes)"
