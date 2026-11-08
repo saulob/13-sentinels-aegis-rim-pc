@@ -34,6 +34,38 @@ constexpr TextLanguage kLanguages[] = {
 constexpr char kUnverifiedNote[] = "Not yet verified to run on this PC port.";
 constexpr char kConfirmedNote[] = "";
 
+// The game's three sceKernelIsNeoMode choices between 1920 x 1080 and 3840 x 2160: its display colour target, its depth
+// target and the screen size getters every viewport and scene target reads (`mov reg, imm32`, both alternatives).
+constexpr int kWidth = 0;
+constexpr int kHeight = 1;
+
+constexpr TsrResolutionSite kResolutionSites100[] = {
+    {0x681781, 1, {0xb8}, 1920, kWidth},  {0x681786, 1, {0xb9}, 3840, kWidth},
+    {0x68179c, 1, {0xb8}, 1080, kHeight}, {0x6817a1, 1, {0xb9}, 2160, kHeight},
+    {0x6818d8, 1, {0xb8}, 1080, kHeight}, {0x6818dd, 1, {0xb9}, 2160, kHeight},
+    {0x6818f3, 1, {0xb8}, 1920, kWidth},  {0x6818f8, 1, {0xb9}, 3840, kWidth},
+    {0x68208c, 1, {0xb9}, 3840, kWidth},  {0x682091, 1, {0xb8}, 1920, kWidth},
+    {0x6820ac, 1, {0xb9}, 2160, kHeight}, {0x6820b1, 1, {0xb8}, 1080, kHeight},
+};
+
+constexpr TsrResolutionSite kResolutionSites101[] = {
+    {0x683a11, 1, {0xb8}, 1920, kWidth},  {0x683a16, 1, {0xb9}, 3840, kWidth},
+    {0x683a2c, 1, {0xb8}, 1080, kHeight}, {0x683a31, 1, {0xb9}, 2160, kHeight},
+    {0x683b68, 1, {0xb8}, 1080, kHeight}, {0x683b6d, 1, {0xb9}, 2160, kHeight},
+    {0x683b83, 1, {0xb8}, 1920, kWidth},  {0x683b88, 1, {0xb9}, 3840, kWidth},
+    {0x68431c, 1, {0xb9}, 3840, kWidth},  {0x684321, 1, {0xb8}, 1920, kWidth},
+    {0x68433c, 1, {0xb9}, 2160, kHeight}, {0x684341, 1, {0xb8}, 1080, kHeight},
+};
+
+constexpr TsrResolutionSite kResolutionSites102[] = {
+    {0x5bcfff, 1, {0xb8}, 1920, kWidth},  {0x5bd004, 1, {0xb9}, 3840, kWidth},
+    {0x5bd01a, 1, {0xb8}, 1080, kHeight}, {0x5bd01f, 1, {0xb9}, 2160, kHeight},
+    {0x5bd156, 1, {0xb8}, 1080, kHeight}, {0x5bd15b, 1, {0xb9}, 2160, kHeight},
+    {0x5bd171, 1, {0xb8}, 1920, kWidth},  {0x5bd176, 1, {0xb9}, 3840, kWidth},
+    {0x5bd8ec, 1, {0xb9}, 3840, kWidth},  {0x5bd8f1, 1, {0xb8}, 1920, kWidth},
+    {0x5bd90c, 1, {0xb9}, 2160, kHeight}, {0x5bd911, 1, {0xb8}, 1080, kHeight},
+};
+
 constexpr GameBuild kGameBuilds[] = {
     {
         "CUSA19610",
@@ -46,7 +78,7 @@ constexpr GameBuild kGameBuilds[] = {
         "CUSA19610 1.00 USA",
         "USA",
         kBaseLayers,
-        {},
+        kResolutionSites100,
         kLanguages,
         kConfirmedNote,
         kBasePromptArchives,
@@ -63,7 +95,7 @@ constexpr GameBuild kGameBuilds[] = {
         "CUSA19610 1.01 USA",
         "USA",
         kUpdate101Layers,
-        {},
+        kResolutionSites101,
         kLanguages,
         kUnverifiedNote,
         kBasePromptArchives,
@@ -80,7 +112,7 @@ constexpr GameBuild kGameBuilds[] = {
         "CUSA19610 1.02 USA",
         "USA",
         kUpdate102Layers,
-        {},
+        kResolutionSites102,
         kLanguages,
         kConfirmedNote,
         kUpdatePromptArchives,

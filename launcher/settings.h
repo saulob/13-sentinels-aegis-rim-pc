@@ -28,9 +28,9 @@ inline constexpr char kSharpenKey[] = "rcas";
 inline constexpr char kSharpenStrengthKey[] = "rcas_strength";
 inline constexpr char kRenderResolutionKey[] = "render_resolution";
 inline constexpr char kNativeResolution[] = "native";
-inline constexpr char kAspectRatioKey[] = "aspect_ratio";
-inline constexpr char kDefaultAspectRatio[] = "16:9";
 inline constexpr char kGraphicsCardKey[] = "graphics_card";
+// Which renderer runs the game (gpu/shim/tsr_renderer.h, the same keys); read when the game starts.
+inline constexpr char kRendererKey[] = "renderer";
 inline constexpr char kAntiAliasingKey[] = "smaa";
 inline constexpr char kAnisotropyKey[] = "anisotropy";
 inline constexpr char kTextLanguageKey[] = "text_language";
@@ -65,6 +65,30 @@ inline constexpr PresentationChoice kPresentationChoices[] = {
     {"stretch", "Stretch"},
 };
 inline constexpr char kDefaultPresentation[] = "letterbox";
+
+struct RendererChoice {
+    std::string_view key;
+    std::string_view name;
+};
+
+inline constexpr RendererChoice kRendererChoices[] = {
+    {"auto", "Auto"},
+    {"vulkan", "Vulkan"},
+    {"opengl", "OpenGL (experimental)"},
+#ifdef _WIN32
+    {"d3d11", "Direct3D 11 (experimental)"},
+#endif
+};
+inline constexpr char kDefaultRenderer[] = "vulkan";
+
+inline std::string_view RendererName(std::string_view key) {
+    for (const RendererChoice& choice : kRendererChoices) {
+        if (choice.key == key) {
+            return choice.name;
+        }
+    }
+    return "Vulkan";
+}
 
 using Values = std::map<std::string, std::string, std::less<>>;
 

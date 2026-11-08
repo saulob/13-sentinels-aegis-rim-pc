@@ -43,7 +43,7 @@ struct GameBuild {
     const char* label;            // the name the log, the launcher and the loader show
     const char* region;
     std::span<const PackageLayer> layers; // base package first; the last layer is the finished game
-    std::span<const TsrResolutionSite> resolution_sites; // empty: runs only at its native size
+    std::span<const TsrResolutionSite> resolution_sites; // empty: renders only at its native size
     std::span<const TextLanguage> text_languages;        // the first is the default
     const char* support_note;     // shown on the Play page; empty once the build has been confirmed to run
     std::span<const char* const> prompt_archives; // the archives the Xbox icons patch covers (controller_prompts.h)

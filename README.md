@@ -47,6 +47,20 @@ controller icons, keyboard bindings, port hotkeys),
 **Trophies** (kept on this PC), **Bug Report**, **About** (folders, logs, diagnostics, sponsor). There is no Online
 page and no Cheats page.
 
+**Renderer** (Display page, also in the in-game Options menu): Vulkan is the default and the supported renderer. OpenGL
+and Direct3D 11 (OpenGL ES through ANGLE, Windows only) are experimental and not yet verified with this game; Auto uses
+Vulkan, and OpenGL when Vulkan cannot run. See [docs/RENDERERS.md](docs/RENDERERS.md).
+
+**Render resolution** (Graphics page, also in the in-game Options menu; applies at the next start).
+Render resolution (480p, 720p, Native 1080p, 1440p, 1800p, 4K) sets the size of the game's own render targets: the loader
+rewrites the game's 12 verified choices between 1920 × 1080 and its PS4 Pro size 3840 × 2160 (display colour and depth
+targets and the screen size every viewport and scene target reads), separately located in each of the 1.00, 1.01 and 1.02
+executables, and above 1080p answers PS4 Pro so the game takes the path it was built to run at 4K. If a site does not hold
+its original instruction nothing is written and the game renders at Native, with the reason in the log. The game
+always shows its original 16:9 picture, with black bars where the window or display is not 16:9 (Presentation Stretch
+fills it instead). There is no Aspect Ratio setting and no True Ultrawide; an `aspect_ratio` line left in `tsr.ini` by an
+earlier build is ignored. The log's `Render resolution:` lines show what was requested and used.
+
 **Bug reports are never uploaded.** The page builds a privacy-filtered report from one chosen log, shows a preview,
 saves it to `logs\reports\`, and opens the GitHub issue tracker only when asked. Attaching the file is your own step.
 

@@ -43,8 +43,6 @@ static char (*names)[128];
 static uint64_t import_count;
 static unsigned char *image;
 static const TsrResolution *render_resolution=&tsr_resolutions[0];
-static const TsrAspectRatio *aspect_ratio=&tsr_aspect_ratios[0];
-static TsrResolution render_target;
 static size_t page_size;
 typedef struct { uint64_t base, size, init, tls_address, tls_memsz, tls_filesz, tls_module; } LinkedModule;
 static LinkedModule modules[16];
@@ -571,9 +569,6 @@ int main(int argc, char **argv) {
         printf("TSR: game build pinned by TSR_GAME_BUILD\n");
     }
     render_resolution=&tsr_resolutions[tsr_render_resolution(settings_file,paths.image_dir)];
-    aspect_ratio=&tsr_aspect_ratios[tsr_aspect_ratio(settings_file,paths.image_dir)];
-    render_target=tsr_render_target(render_resolution,aspect_ratio);
-    runtime_tsr_set_neo_mode(render_target.pro_memory);
     runtime_set_language(tsr_text_language(settings_file,paths.image_dir,app0));
     const int skip_intro_wanted=tsr_skip_intro(settings_file);
     runtime_pad_set_settings(settings_file);
@@ -788,26 +783,31 @@ int main(int argc, char **argv) {
         runtime_log_flush();
         _exit(missing ? 1 : 0); /* no destructors: GPU threads are running */
     }
-    if (render_resolution!=&tsr_resolutions[0] || aspect_ratio!=&tsr_aspect_ratios[0]) {
-        char error[320];
-        if (!known_build) fail_running("render resolution and aspect ratio need a supported game build");
-        if (!game_build.resolution_site_count) fail_running("render resolution and aspect ratio are not available for this game build");
-        if (!tsr_apply_resolution(image,size,game_build.resolution_sites,game_build.resolution_site_count,
-                                  &render_target,error,sizeof(error))) {
-            char message[400];
-            snprintf(message,sizeof(message),"%s, game build %s",error,game_build.label);
-            fail_running(message);
+    const TsrResolution *requested_resolution=render_resolution;
+    if (render_resolution!=&tsr_resolutions[0]) {
+        char error[320]="";
+        if (!known_build) snprintf(error,sizeof(error),"the game build is not a supported one");
+        else if (!game_build.resolution_site_count) snprintf(error,sizeof(error),"no verified render size sites for %s",game_build.label);
+        else tsr_apply_resolution(image,size,game_build.resolution_sites,game_build.resolution_site_count,
+                                  render_resolution,error,sizeof(error));
+        if (error[0]) {
+            printf("Render resolution: fallback to Native 1920x1080, the game code is unchanged: %s\n",error);
+            render_resolution=&tsr_resolutions[0];
+        } else {
+            printf("Render resolution: %zu render size sites of %s set to %dx%d\n",game_build.resolution_site_count,
+                   game_build.label,render_resolution->width,render_resolution->height);
         }
     }
-    printf("TSR: render resolution %dx%d (%s)%s\n",render_target.width,render_target.height,render_resolution->key,
-           render_target.pro_memory ? ", PS4 Pro memory path" : "");
-    printf("TSR: Aspect ratio: %s, render target %dx%d\n",aspect_ratio->name,render_target.width,render_target.height);
+    runtime_tsr_set_neo_mode(render_resolution->pro_memory);
+    printf("Render resolution: requested %s (%dx%d), effective %s, main render target %dx%d%s\n",
+           requested_resolution->key,requested_resolution->width,requested_resolution->height,render_resolution->key,
+           render_resolution->width,render_resolution->height,render_resolution->pro_memory ? ", PS4 Pro path" : "");
     const char *verified_build=known_build ? build_key : NULL;
     if (skip_intro_wanted)
         skip_intro_install(image,size,entry,verified_build,hook_stubs,skip_intro_stub_bytes());
     else puts("Skip Intro: off");
-    const TsrRunSettings run_settings={known_build ? game_build.label : NULL,render_target.width,render_target.height,
-                                       render_resolution->key,aspect_ratio->name};
+    const TsrRunSettings run_settings={known_build ? game_build.label : NULL,render_resolution->width,render_resolution->height,
+                                       render_resolution->key};
     tsr_startup_phase("patches installed");
     tsr_log_settings_summary(settings_file,paths.image_dir,app0,&run_settings);
 #ifdef _WIN32

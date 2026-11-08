@@ -15,15 +15,10 @@ std::string Dimensions(int width, int height) {
 
 } // namespace
 
-WindowSize WindowSizeOf(int height, const TsrAspectRatio& aspect) {
-    const long width = (static_cast<long>(height) * aspect.width * 2 + aspect.height) / (2 * aspect.height);
-    return {static_cast<int>(width), height};
-}
-
-std::vector<WindowSize> WindowSizesFor(const TsrAspectRatio& aspect) {
+std::vector<WindowSize> WindowSizes() {
     std::vector<WindowSize> sizes;
     for (const int height : kWindowHeights) {
-        sizes.push_back(WindowSizeOf(height, aspect));
+        sizes.push_back({(height * 16 + 4) / 9, height});
     }
     return sizes;
 }

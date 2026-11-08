@@ -14,7 +14,7 @@
   test works on a copy in the build folder. TSR_TEST_PACKAGES names a folder with the real USA packages, which are only
   opened; TSR_TEST_INSTALL adds a full install into that folder.
 .PARAMETER Group
-  Runtime, SaveData, Packages, Launcher, Features, Audio, Video, Imports, or All (the default). Several can be given.
+  Runtime, SaveData, Packages, Launcher, Features, Audio, Video, Graphics, Imports, or All (the default). Several can be given.
 .PARAMETER TimeoutSeconds
   Fails a test that runs longer than this.
 .EXAMPLE
@@ -31,7 +31,7 @@ param(
 . (Join-Path $PSScriptRoot '_common.ps1')
 $root = $script:RepoRoot
 $buildDir = Join-Path $root 'build\cmake\clang64'
-$groupOrder = @('Runtime', 'SaveData', 'Packages', 'Launcher', 'Features', 'Audio', 'Video', 'Imports')
+$groupOrder = @('Runtime', 'SaveData', 'Packages', 'Launcher', 'Features', 'Audio', 'Video', 'Graphics', 'Imports')
 # powershell -File passes "-Group A,B" as one string.
 $Group = @($Group | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim() } | Where-Object { $_ })
 foreach ($name in $Group) {
@@ -109,13 +109,24 @@ function Invoke-PromptArt {
     return Result 'PASS' '' $notes
 }
 
+function Invoke-Script([string]$Relative) {
+    $run = Invoke-Native { & powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File (Join-Path $root $Relative) }
+    if ($run.Code -ne 0) {
+        $run.Lines | ForEach-Object { Write-Host "    $_" }
+        $fails = @($run.Lines | Where-Object { $_ -match '^FAIL' } | Select-Object -First 3)
+        return Result 'FAIL' $(if ($fails) { $fails -join '; ' } else { "exit code $($run.Code)" })
+    }
+    $run.Lines | Select-Object -Last 1 | ForEach-Object { Write-Host "    $_" -ForegroundColor DarkGray }
+    return Result 'PASS'
+}
+
 $steps = @(
     (Step 'Runtime' 'threads, join/detach, handles, mutexes, condition variables, wait states' 'tsr-runtime-tests'),
     (Step 'Runtime' 'guest memory (sparse backing, commitment, aliases, release)' 'tsr-memory-windows-tests'),
     (Step 'Runtime' 'log rotation and closed standard streams' 'tsr-log-tests'),
     (Step 'Runtime' 'crash report module history' 'tsr-module-history-tests'),
     (Step 'SaveData' 'mounts, files, handles, errors, interrupted writes, metadata, user save copy' 'tsr-savedata-tests'),
-    (Step 'Packages' 'identities 1.00/1.01/1.02, real packages, installs, switching, update removal, isolation, voice banks, boot images, prompt art export' 'tsr-game-profile-tests'),
+    (Step 'Packages' 'identities 1.00/1.01/1.02, real packages, installs, highest-version precedence, update removal, isolation, voice banks, boot images, prompt art export' 'tsr-game-profile-tests'),
     (Step 'Packages' 'Xbox prompt art coverage (Python, on the entries the step above exported)' -Block { Invoke-PromptArt }),
     (Step 'Launcher' 'tsr.ini persistence, validation, launcher gate, keys, languages, window sizes' 'tsr-launcher-tests'),
     (Step 'Launcher' 'windowed-mode size and centring' 'tsr-window-tests'),
@@ -124,7 +135,12 @@ $steps = @(
     (Step 'Features' 'Xbox patches, real archive switching, refusals, rollback, shared links, languages, build status, settings' 'tsr-game-feature-tests'),
     (Step 'Audio' 'Ajm contexts, instances, batch slots, pending batches, errors' 'tsr-ajm-tests'),
     (Step 'Video' 'presentation pacing' 'tsr-frame-pacing-tests'),
+    (Step 'Video' 'renderer selection (Vulkan default, Auto, OpenGL, Direct3D 11, requirements, launcher and Options menu)' 'tsr-renderer-selection-tests'),
+    (Step 'Video' 'OpenGL backend (detiler, emitted GLSL through glslang, no context)' 'tsr-opengl-backend-tests'),
+    (Step 'Video' 'OpenGL fast paths (write watch with real faults, state tracker, stream ring, no context)' 'tsr-opengl-perf-tests'),
+    (Step 'Video' 'ANGLE dependency (pin, cache, extraction, DLL staging, package checks, no network)' -Block { Invoke-Script 'tests\angle_dependency_tests.ps1' }),
     (Step 'Video' 'H.264 decoder (Videodec2)' -Block { Result 'SKIPPED' 'lives in the video core library; no headless test target yet' }),
+    (Step 'Graphics' 'render resolution sites on the real 1.00/1.01/1.02 images, refusals, 16:9 presentation, downsample filter, settings, menus, backends' 'tsr-graphics-tests'),
     (Step 'Imports' 'USA 1.00 import coverage' -Block { Invoke-Imports '1.00' $true }),
     (Step 'Imports' 'USA 1.01 import coverage' -Block { Invoke-Imports '1.01' $false }),
     (Step 'Imports' 'USA 1.02 import coverage' -Block { Invoke-Imports '1.02' $false })

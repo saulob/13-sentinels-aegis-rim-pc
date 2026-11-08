@@ -33,8 +33,8 @@ constexpr ManagedSetting kBaseSettings[] = {
     {kSharpenKey, "1"},
     {kSharpenStrengthKey, "75"},
     {kRenderResolutionKey, kNativeResolution},
-    {kAspectRatioKey, kDefaultAspectRatio},
     {kGraphicsCardKey, ""},
+    {kRendererKey, kDefaultRenderer},
     {kAntiAliasingKey, "0"},
     {kAnisotropyKey, "0"},
     {kTextLanguageKey, "english"},
@@ -107,13 +107,13 @@ bool IsValidSetting(std::string_view key, std::string_view value) {
         return std::any_of(std::begin(kPresentationChoices), std::end(kPresentationChoices),
                            [&](const PresentationChoice& choice) { return value == choice.key; });
     }
+    if (key == kRendererKey) {
+        return std::any_of(std::begin(kRendererChoices), std::end(kRendererChoices),
+                           [&](const RendererChoice& choice) { return value == choice.key; });
+    }
     if (key == kRenderResolutionKey) {
         return std::any_of(std::begin(tsr_resolutions), std::end(tsr_resolutions),
                            [&](const TsrResolution& resolution) { return value == resolution.key; });
-    }
-    if (key == kAspectRatioKey) {
-        return std::any_of(std::begin(tsr_aspect_ratios), std::end(tsr_aspect_ratios),
-                           [&](const TsrAspectRatio& aspect) { return value == aspect.key; });
     }
     return true;
 }
@@ -221,15 +221,6 @@ extern "C" int tsr_render_resolution(const char* settings_file, const char* imag
     return tsr_resolution_index(settings.Get(kRenderResolutionKey, kNativeResolution).c_str());
 }
 
-extern "C" int tsr_aspect_ratio(const char* settings_file, const char* image_dir) {
-    using namespace tsr;
-    if (RestrictedToNativeResolution(BuildOfImageDir(image_dir))) {
-        return 0;
-    }
-    const LauncherSettings settings(PathFromUtf8(settings_file ? settings_file : ""));
-    return tsr_aspect_index(settings.Get(kAspectRatioKey, kDefaultAspectRatio).c_str());
-}
-
 extern "C" int tsr_detailed_logging(const char* settings_file) {
     using namespace tsr;
     if (!settings_file || !*settings_file) {
@@ -280,10 +271,9 @@ std::string SettingsSummary(const LauncherSettings& settings, const GameBuild* b
          OnOff(settings.GetBool(kShowResolutionTitleKey, false)));
     if (run) {
         line("Render resolution " + std::to_string(run->render_width) + "x" + std::to_string(run->render_height) + " (" +
-             run->render_resolution + "), aspect ratio " + run->aspect_ratio);
+             run->render_resolution + ")");
     } else {
-        line("Render resolution " + settings.Get(kRenderResolutionKey, kNativeResolution) + ", aspect ratio " +
-             settings.Get(kAspectRatioKey, kDefaultAspectRatio));
+        line("Render resolution " + settings.Get(kRenderResolutionKey, kNativeResolution));
     }
     line("Text Language " + TextSummary(settings, support) + ", Voice Language " + VoiceSummary(support) +
          ", overlay programs " +

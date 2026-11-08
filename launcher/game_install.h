@@ -16,7 +16,6 @@ namespace tsr {
 
 enum class InstallStatus {
     kInstalled,
-    kActivated,
     kCancelled,
     kNotPackage,
     kUnsupportedPackage,
@@ -48,7 +47,7 @@ struct InstallResult {
     size_t files = 0, linked = 0;
     const GameBuild* build = nullptr; // the build that was installed
     bool ok() const {
-        return status == InstallStatus::kInstalled || status == InstallStatus::kActivated || status == InstallStatus::kUpToDate;
+        return status == InstallStatus::kInstalled || status == InstallStatus::kUpToDate;
     }
 };
 
@@ -75,7 +74,8 @@ InstallResult InstallFromFolder(const std::filesystem::path& source, const GameR
 InstallResult StageUpdate(const std::filesystem::path& base_app0, const std::filesystem::path& update_dir,
                           const std::filesystem::path& staged_app0);
 
-// Makes a complete installed build the active one; its folder is not changed. False when it is not ready.
+// True when this build's own folder is completely and correctly prepared. There is nothing to "activate": the
+// effective active build is always the highest-precedence one LastPreparedBuild finds ready, automatically.
 bool ActivateInstalledBuild(const GameRoots& roots, const GameBuild& build, std::span<const GameBuild> builds = SupportedBuilds());
 
 enum class RemoveStatus { kRemoved, kNotUpdate, kNotInstalled, kForeignFolder, kInUse };
@@ -83,14 +83,15 @@ enum class RemoveStatus { kRemoved, kNotUpdate, kNotInstalled, kForeignFolder, k
 struct RemoveResult {
     RemoveStatus status = RemoveStatus::kRemoved;
     std::string detail;            // for the log, not the UI
-    bool base_selected = false;    // the removed update was the active build; the base is now
+    bool base_selected = false;    // the base is the effective active build after this removal
     bool ok() const { return status == RemoveStatus::kRemoved; }
 };
 
 // Removes an installed update build: its game folder and boot image, nothing else. The base build, the other updates,
 // saves, trophies and settings live elsewhere or in other folders and are not touched; the update's files that are links
 // into the base only lose that link. Both folders are first renamed aside, so a removal that cannot start changes nothing
-// and one that stops halfway leaves no folder that passes as installed. When the update was active, the base becomes it.
+// and one that stops halfway leaves no folder that passes as installed. The effective active build (LastPreparedBuild)
+// is whichever remains highest in precedence; it is never forced.
 RemoveResult RemoveInstalledUpdate(const GameRoots& roots, const GameBuild& build,
                                    std::span<const GameBuild> builds = SupportedBuilds());
 

@@ -59,9 +59,6 @@ int tsr_logs_directory(const char *logs_dir, const char *log_file, char *out, si
  * resolution sites. */
 int tsr_render_resolution(const char *settings_file, const char *image_dir);
 
-/* Index into tsr_aspect_ratios of the aspect_ratio in the settings file, among the shapes the build image_dir was built
- * from: 0 (16:9 Original) when the file or the value is missing or the build has no verified render resolution sites. */
-int tsr_aspect_ratio(const char *settings_file, const char *image_dir);
 
 /* The system language the game is told for the text_language in the settings file, among the languages the prepared
  * game folder app0 holds of the build image_dir was built from: the first of them (English when the build is unknown)
@@ -79,7 +76,6 @@ typedef struct TsrRunSettings {
     const char *game_build;        /* label; NULL for an unknown build */
     int render_width, render_height;
     const char *render_resolution; /* tsr_resolutions key */
-    const char *aspect_ratio;      /* tsr_aspect_ratios name */
 } TsrRunSettings;
 
 /* Prints the startup state support needs as "Settings:" lines: port version, platform, game build and the display and

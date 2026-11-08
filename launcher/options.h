@@ -21,9 +21,7 @@ struct WindowSize {
 inline constexpr int kWindowHeights[] = {720, 900, 1080, 1440, 2160};
 inline constexpr WindowSize kGamePictureSize{1920, 1080};
 
-WindowSize WindowSizeOf(int height, const TsrAspectRatio& aspect);
-
-std::vector<WindowSize> WindowSizesFor(const TsrAspectRatio& aspect);
+std::vector<WindowSize> WindowSizes();
 
 enum class PageId { kPlay, kDisplay, kGraphics, kGameplay, kControls, kTrophies, kBugReport, kAbout };
 

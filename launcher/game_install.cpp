@@ -452,47 +452,20 @@ InstallStatus FromPackage(PackageResult::Code code) {
     return InstallStatus::kReadFailed;
 }
 
-// The build the launcher runs, when its files still pass the readiness check.
-const GameBuild* ActiveValidBuild(const GameRoots& roots, std::span<const GameBuild> builds) {
-    const GameBuild* active = LastPreparedBuild(roots, builds);
-    if (!active) {
-        return nullptr;
-    }
-    const GameCheck check = CheckGameFiles(BuildPaths(roots, *active), builds);
-    return check.state == GameFileState::kValid && check.build == active ? active : nullptr;
-}
-
-// Makes a complete build the newest prepared one, which is how ActiveBuildPaths picks the active build. Only the small
-// marker is written.
-bool ActivatePrepared(const fs::path& app0) {
-    std::error_code ec;
-    fs::last_write_time(app0 / kPreparedMarker, fs::file_time_type::clock::now(), ec);
-    return !ec;
-}
-
-// A selected build that needs no copying. The active build itself is up to date. A complete folder of any other build
-// that passes the readiness check becomes the active one, whether it is older or newer. Nothing is returned when the
-// build has to be installed.
+// A package whose build is already completely and correctly prepared needs no (re)installing. Which build is
+// effectively active is decided separately, by precedence (LastPreparedBuild): installing an older, already-prepared
+// build here never changes it. Nothing is returned when the build still has to be installed.
 std::optional<InstallResult> ReuseInstalledBuild(const GameRoots& roots, std::span<const GameBuild> builds,
                                                  const GameBuild& build, bool replace_active) {
-    if (ActiveValidBuild(roots, builds) == &build) {
-        if (replace_active) {
-            return std::nullopt;
-        }
-        return Failure(InstallStatus::kUpToDate, build.label);
+    if (replace_active) {
+        return std::nullopt; // repairing the active build by reinstalling it is still allowed
     }
     const GamePaths target = BuildPaths(roots, build);
     const GameCheck prepared = CheckGameFiles(target, builds);
     if (prepared.state != GameFileState::kValid || prepared.build != &build) {
         return std::nullopt;
     }
-    if (!ActivatePrepared(target.app0)) {
-        return Failure(InstallStatus::kWriteFailed, "cannot activate " + Utf8(target.app0));
-    }
-    InstallResult result;
-    result.status = InstallStatus::kActivated;
-    result.build = &build;
-    return result;
+    return Failure(InstallStatus::kUpToDate, build.label);
 }
 
 // A package that names a supported build but carries another executable is diagnosed in place, before anything is
@@ -631,9 +604,8 @@ InstallResult StageUpdate(const fs::path& base_app0, const fs::path& update_dir,
 }
 
 bool ActivateInstalledBuild(const GameRoots& roots, const GameBuild& build, std::span<const GameBuild> builds) {
-    const GamePaths target = BuildPaths(roots, build);
-    const GameCheck prepared = CheckGameFiles(target, builds);
-    return prepared.state == GameFileState::kValid && prepared.build == &build && ActivatePrepared(target.app0);
+    const GameCheck prepared = CheckGameFiles(BuildPaths(roots, build), builds);
+    return prepared.state == GameFileState::kValid && prepared.build == &build;
 }
 
 namespace {
@@ -702,8 +674,6 @@ RemoveResult RemoveInstalledUpdate(const GameRoots& roots, const GameBuild& buil
     if (fs::exists(layout.app0, ec) && CheckSfoIdentity(sfo, builds).build != &build) {
         return fail(RemoveStatus::kForeignFolder, Utf8(layout.app0) + " does not hold " + build.label);
     }
-    const bool was_active = LastPreparedBuild(roots, builds) == &build;
-
     const fs::path app0_aside = WithSuffix(layout.app0, kRemovingSuffix);
     const fs::path image_aside = WithSuffix(layout.image, kRemovingSuffix);
     RemoveAside(app0_aside, result.detail);
@@ -723,9 +693,9 @@ RemoveResult RemoveInstalledUpdate(const GameRoots& roots, const GameBuild& buil
     }
     RemoveAside(app0_aside, result.detail);
     RemoveAside(image_aside, result.detail);
-    if (was_active || !LastPreparedBuild(roots, builds)) {
-        result.base_selected = ActivateInstalledBuild(roots, *base, builds);
-    }
+    // The effective active build is recomputed by precedence (LastPreparedBuild), not forced: removing an update
+    // selects the base only when no other update is still installed.
+    result.base_selected = LastPreparedBuild(roots, builds) == base;
     return result;
 }
 
@@ -951,10 +921,8 @@ InstallMessage DescribeInstall(InstallStatus status) {
         return {Tr("Base game required"),
                 Tr("This package is an update. Install the CUSA19610 1.00 USA base package first, then install the "
                    "update.")};
-    case InstallStatus::kActivated:
-        return {Tr("Game version changed"), Tr("The selected version is now the one that starts.")};
     case InstallStatus::kUpToDate:
-        return {Tr("Already installed"), Tr("This version is already the one that starts.")};
+        return {Tr("Already installed"), Tr("This version is already installed.")};
     case InstallStatus::kExpectedBasePackage:
         return {Tr("This is an update package"),
                 Tr("Install game needs the base game. Use Install update for the 1.01 or 1.02 update package.")};

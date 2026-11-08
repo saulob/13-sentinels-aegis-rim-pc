@@ -153,3 +153,20 @@ target_compile_definitions(tsr-savedata-tests PRIVATE TSR_SAVEDATA_TEST_ROOT="${
 target_link_libraries(tsr-savedata-tests PRIVATE bcrypt -pthread)
 tsr_add_test(tsr-ajm-tests tests/ajm_tests.c)
 target_link_libraries(tsr-ajm-tests PRIVATE tsr_atrac9 -pthread)
+tsr_add_test(tsr-graphics-tests tests/graphics_tests.cpp)
+target_link_libraries(tsr-graphics-tests PRIVATE tsr_launcher_core)
+tsr_add_test(tsr-renderer-selection-tests tests/renderer_selection_tests.cpp)
+set_target_properties(tsr-renderer-selection-tests PROPERTIES CXX_STANDARD 23)
+target_include_directories(tsr-renderer-selection-tests PRIVATE gpu/shadps4)
+# The OpenGL fast paths against real page faults and recording entry points; no context.
+tsr_add_test(tsr-opengl-perf-tests tests/opengl_perf_tests.cpp)
+set_target_properties(tsr-opengl-perf-tests PROPERTIES CXX_STANDARD 23)
+target_include_directories(tsr-opengl-perf-tests PRIVATE gpu/shadps4)
+target_link_libraries(tsr-opengl-perf-tests PRIVATE SDL3::SDL3 Threads::Threads)
+# The detiler and the emitted GLSL through glslangValidator; links the video core, no context.
+tsr_add_test(tsr-opengl-backend-tests tests/opengl_backend_tests.cpp)
+set_target_properties(tsr-opengl-backend-tests PROPERTIES CXX_STANDARD 23)
+target_include_directories(tsr-opengl-backend-tests PRIVATE gpu/shadps4 tests ${CMAKE_BINARY_DIR}/gpu/include
+    gpu/third_party/gcn/include gpu/third_party/half/include gpu/third_party/xbyak)
+target_compile_definitions(tsr-opengl-backend-tests PRIVATE TSR_GLSLANG="${GLSLANG_COMPILER}")
+target_link_libraries(tsr-opengl-backend-tests PRIVATE tsrgpu $<$<BOOL:${WIN32}>:onecore>)

@@ -273,17 +273,9 @@ GamePaths BuildPaths(const GameRoots& roots, const GameBuild& build) {
 
 const GameBuild* LastPreparedBuild(const GameRoots& roots, std::span<const GameBuild> builds) {
     const GameBuild* chosen = nullptr;
-    std::filesystem::file_time_type chosen_time;
     for (const GameBuild& build : builds) {
-        const GamePaths paths = BuildPaths(roots, build);
-        std::error_code ec;
-        const std::filesystem::file_time_type time = std::filesystem::last_write_time(paths.app0 / kPreparedMarker, ec);
-        if (PreparationScope(paths.app0) != "full" || ec) {
-            continue;
-        }
-        if (!chosen || time > chosen_time) {
-            chosen = &build;
-            chosen_time = time;
+        if (PreparationScope(BuildPaths(roots, build).app0) == "full") {
+            chosen = &build; // a later (higher-precedence) build replaces an earlier one; order never goes backward
         }
     }
     return chosen;

@@ -70,7 +70,7 @@ constexpr const char* PageNote(Page page) {
     case Page::Display:
         return "Window size, Monitor and Graphics card are launcher-only: change them before pressing Play.";
     case Page::Graphics:
-        return "Render resolution and texture filtering apply after a restart.";
+        return "Renderer, render resolution, aspect ratio and texture filtering apply after a restart.";
     case Page::Gameplay:
         return "Language is launcher-only.";
     case Page::Controls:
@@ -78,8 +78,6 @@ constexpr const char* PageNote(Page page) {
     }
     return "";
 }
-
-inline constexpr int kDefaultWindowHeight = 1080;
 
 inline constexpr char kRestartNote[] = "Some changes apply after a restart.";
 
@@ -93,14 +91,24 @@ struct Choice {
 
 inline constexpr Choice kOffOn[] = {{"0", "Off"}, {"1", "On"}};
 inline constexpr Choice kHiddenShown[] = {{"0", "Hidden"}, {"1", "Shown"}};
-inline constexpr Choice kRenderResolutions[] = {{"native", "Native (1080p)"}, {"480p", "480p"},   {"720p", "720p"},
-                                                {"1440p", "1440p"},           {"1800p", "1800p"}, {"4K", "4K"}};
-inline constexpr Choice kAspectRatios[] = {{"16:9", "16:9 Original"},
-                                           {"16:10", "16:10"},
-                                           {"21:9", "21:9 Ultrawide"},
-                                           {"32:9", "32:9 Super Ultrawide"},
-                                           {"4:3", "4:3"},
-                                           {"5:4", "5:4"}};
+inline constexpr Choice kRenderers[] = {
+    {"auto", "Auto"},
+    {"vulkan", "Vulkan"},
+    {"opengl", "OpenGL (experimental)"},
+#ifdef _WIN32
+    {"d3d11", "Direct3D 11 (experimental)"},
+#endif
+};
+#ifdef _WIN32
+inline constexpr char kRendererHelp[] =
+    "Vulkan is the supported renderer. OpenGL and Direct3D 11 are experimental. Direct3D 11 is intended mainly for "
+    "Windows systems where Vulkan or OpenGL has problems. Auto uses OpenGL only when Vulkan cannot run.";
+#else
+inline constexpr char kRendererHelp[] =
+    "Vulkan is the supported renderer. OpenGL is experimental. Auto uses OpenGL only when Vulkan cannot run.";
+#endif
+inline constexpr Choice kRenderResolutions[] = {{"480p", "480p"},   {"720p", "720p"},   {"native", "Native (1080p)"},
+                                                {"1440p", "1440p"}, {"1800p", "1800p"}, {"4K", "4K"}};
 inline constexpr Choice kUpscaling[] = {{"0", "Off"}, {"1", "FSR 1"}};
 inline constexpr Choice kAntiAliasing[] = {{"0", "Off"}, {"1", "SMAA"}};
 inline constexpr Choice kDisplayModes[] = {{"windowed", "Windowed"}, {"borderless", "Borderless Fullscreen"}};
@@ -117,7 +125,7 @@ inline constexpr Choice kStrengths[] = {
 enum class Id {
     DisplayMode,
     VSync,
-    AspectRatio,
+    Renderer,
     RenderResolution,
     Presentation,
     Upscaling,
@@ -146,11 +154,9 @@ inline constexpr Setting kSettings[] = {
      "Borderless Fullscreen fills the monitor. F11 also switches it.", Apply::Live, kDisplayModes},
     {Id::VSync, Page::Display, "vsync", "VSync",
      "On prevents tearing. Off allows it, for the lowest latency and G-Sync/FreeSync.", Apply::Live, kOffOn},
-    {Id::AspectRatio, Page::Display, "aspect_ratio", "Aspect Ratio",
-     "The shape the game renders in. The saved window width follows it.", Apply::Restart,
-     kAspectRatios, TsrSettings::RenderResolution},
+    {Id::Renderer, Page::Graphics, "renderer", "Renderer", kRendererHelp, Apply::Restart, kRenderers},
     {Id::RenderResolution, Page::Graphics, "render_resolution", "Render resolution",
-     "The resolution the game renders at. It is separate from the window size: the picture is scaled to the window. "
+     "The size of the game's own render targets, scaled to the window. Above 1080p the game uses its PS4 Pro path; "
      "1440p and above need a powerful graphics card.",
      Apply::Restart, kRenderResolutions, TsrSettings::RenderResolution},
     {Id::Presentation, Page::Graphics, "presentation", "Presentation",
@@ -204,7 +210,8 @@ inline std::string Current(const TsrSettings::Values& v, Id id) {
         return std::string(TsrGraphics::DisplayModeKeys[size_t(std::clamp(v.display_mode.load(), 0,
                                                                           int(TsrGraphics::DisplayModeCount) - 1))]);
     case Id::VSync: return flag(v.vsync);
-    case Id::AspectRatio: return std::string(TsrGraphics::ParseAspectRatio(v.aspect_ratio).key);
+    case Id::Renderer:
+        return std::string(TsrRenderer::ChoiceKeys[size_t(std::clamp(v.renderer.load(), 0, int(TsrRenderer::ChoiceCount) - 1))]);
     case Id::RenderResolution: return std::string(TsrGraphics::ParseRenderResolution(v.render_resolution));
     case Id::Presentation:
         return std::string(TsrGraphics::PresentationKeys[size_t(std::clamp(v.presentation.load(), 0,
@@ -240,7 +247,7 @@ inline void ApplyLive(TsrSettings::Values& v, Id id, std::string_view value) {
     case Id::FrameRateInTitle: v.show_fps_title = on; break;
     case Id::ResolutionInTitle: v.show_resolution_title = on; break;
     case Id::FrameCounter: v.show_fps = on; break;
-    case Id::AspectRatio:
+    case Id::Renderer:
     case Id::RenderResolution:
     case Id::TextureFiltering: break;
     }
@@ -283,7 +290,7 @@ public:
         } else {
             pending_[size_t(id)] = value == Current(values_, id) ? std::string() : std::string(value);
         }
-        return {true, TsrSettings::SaveEntries(EntriesFor(setting, value))};
+        return {true, TsrSettings::SaveEntries({{setting.key, std::string(value)}})};
     }
 
     Outcome Step(Id id, int step) {
@@ -299,17 +306,6 @@ public:
     }
 
 private:
-    // An aspect ratio also saves the window width that keeps the window the same height, as the launcher does.
-    TsrSettings::Entries EntriesFor(const Setting& setting, std::string_view value) const {
-        TsrSettings::Entries entries{{setting.key, std::string(value)}};
-        if (setting.id == Id::AspectRatio) {
-            const int height = values_.requested_height > 0 ? values_.requested_height.load() : kDefaultWindowHeight;
-            entries.emplace_back("window_width",
-                                 std::to_string(TsrGraphics::WindowWidthFor(height, TsrGraphics::ParseAspectRatio(value))));
-        }
-        return entries;
-    }
-
     TsrSettings::Values& values_;
     std::array<std::string, std::size(kSettings)> pending_;
 };

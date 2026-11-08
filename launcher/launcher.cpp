@@ -103,6 +103,16 @@ constexpr char kWindowSizeHelp[] =
 constexpr char kGraphicsCardHelp[] =
     "Selects which graphics card renders the game. If the selected card is no longer available, the first available "
     "card is used.";
+#ifdef _WIN32
+constexpr char kRendererHelp[] =
+    "Vulkan is the supported renderer. OpenGL and Direct3D 11 are experimental and not yet verified with this game. "
+    "Direct3D 11 is intended mainly for Windows systems where Vulkan or OpenGL has problems. Auto uses Vulkan, and "
+    "OpenGL when this system cannot run Vulkan. It takes effect the next time the game starts.";
+#else
+constexpr char kRendererHelp[] =
+    "Vulkan is the supported renderer. OpenGL is experimental and not yet verified with this game. Auto uses Vulkan, "
+    "and OpenGL when this system cannot run Vulkan. It takes effect the next time the game starts.";
+#endif
 constexpr char kMonitorHelp[] = "The display the game opens on.";
 constexpr char kVSyncHelp[] = "On prevents tearing. Off allows it, for the lowest latency and G-Sync/FreeSync.";
 constexpr char kPresentationHelp[] =
@@ -113,14 +123,10 @@ constexpr char kUpscaleHelp[] =
 constexpr char kSharpenHelp[] =
     "Sharpens the final picture (AMD RCAS). It applies when the window is the size of the render resolution, or "
     "together with FSR 1 in a bigger window.";
-constexpr char kAspectRatioHelp[] = "Sets the game's target rendering format and the Window size choices.";
 constexpr char kRenderResolutionHelp[] =
-    "The resolution the game renders at. It is separate from the window size: the picture is scaled to the window. "
-    "1440p and above need a powerful graphics card.";
-constexpr char kRestrictedAspectRatioHelp[] =
-    "This game build renders at 16:9; the other aspect ratios are not available for it.";
-constexpr char kRestrictedRenderResolutionHelp[] =
-    "This game build renders at its original size; the custom render resolutions are not available for it.";
+    "The size of the game's own render targets: the 3D scenes and the 2D art are drawn at it, then the picture is "
+    "scaled to the window. The game's artwork keeps its original files and layout. Above 1080p the game uses its PS4 "
+    "Pro path, built for 4K; 1440p and above need a powerful graphics card. Applies the next time the game starts.";
 constexpr char kAntiAliasingHelp[] =
     "SMAA smooths jagged edges on the finished picture, at a small cost in performance.";
 constexpr char kAnisotropyHelp[] =
@@ -143,11 +149,9 @@ constexpr char kControllerIconsHelp[] =
     "The buttons the game's prompts show. Xbox repaints the face buttons (A, B, X, Y) and the Menu and View labels in the "
     "installed game archives (reversible; a few seconds, longer the first time if game versions share their files).";
 constexpr char kUpdateHelp[] =
-    "The optional 1.01 or 1.02 update, each laid over the installed base game on its own. The base stays as it was, so 1.00 "
-    "can still be played.";
-constexpr char kRemoveUpdateHelp[] =
-    "Deletes this update's own files. 1.00, the other update, saves, trophies and settings are kept.";
-constexpr char kGameVersionHelp[] = "Which installed version starts.";
+    "Updates are optional: the base game plays on its own. Version 1.02 can be installed directly over the base; "
+    "installing 1.01 first is not required. A successfully installed update is activated automatically, and the "
+    "highest installed version always plays, so an older update is never installed over a newer one by mistake.";
 constexpr char kAllowOverlayProgramsHelp[] =
     "For programs that draw over games (recording, chat, store and performance overlays). On, PLAY starts the game as a "
     "separate program from this launcher, so they can attach to it cleanly. Off starts the game the usual way.";
@@ -296,6 +300,13 @@ bool StartGameProcess(const TsrLauncherConfig& config, std::string& error) {
 
 enum class Outcome { kRunning, kPlay, kQuit };
 
+// The result of checking the installed archives against the Xbox patch, off the GUI thread (RefreshPrompts).
+struct PromptRefreshResult {
+    PromptState state = PromptState::kPlayStation;
+    bool xbox_available = false;
+    std::string why;
+};
+
 class LauncherApp {
 public:
     LauncherApp(const TsrLauncherConfig& config, LauncherSettings& settings, GamePaths paths, GameCheck check)
@@ -324,8 +335,7 @@ public:
         if (!FinishInterruptedRemovals(RootsOf(paths_))) {
             Log("an interrupted update removal could not be finished yet");
         }
-        RefreshPrompts();
-        ApplySavedPrompts();
+        RefreshPrompts(); // async; PollPromptsRefresh() applies the saved choice once it lands
         placement_ = PlacementTracker(host_.Restored());
         fonts_ = trg::LoadSystemFonts(trg::layout::kTextBody);
         if (LoadLauncherImage("header-art.png", header_art_image_)) {
@@ -387,6 +397,7 @@ private:
         TrackPlacement();
         PollInstall();
         PollPrompts();
+        PollPromptsRefresh();
         NormalizeGraphicsCard();
         NormalizeGraphicsSettings();
         if (play_.starting() && ImGui::GetTime() - play_started_ >= kPlayFeedbackSeconds) {
@@ -489,17 +500,11 @@ private:
         installed_builds_ = PreparedBuilds(RootsOf(paths_));
     }
 
-    // A build whose executable has no verified render resolution sites runs at its native 16:9 size; a saved custom
-    // value is put back to the supported one, as a language the build does not have is.
+    // A build without verified render size sites renders at its native size; a saved custom value is put back.
     void NormalizeGraphicsSettings() {
-        if (!RestrictedToNativeResolution(build_)) {
-            return;
-        }
-        if (settings_.Get(kRenderResolutionKey, kNativeResolution) != kNativeResolution) {
+        if (RestrictedToNativeResolution(build_) &&
+            settings_.Get(kRenderResolutionKey, kNativeResolution) != kNativeResolution) {
             settings_.Set(kRenderResolutionKey, kNativeResolution);
-        }
-        if (settings_.Get(kAspectRatioKey, kDefaultAspectRatio) != kDefaultAspectRatio) {
-            settings_.Set(kAspectRatioKey, kDefaultAspectRatio);
         }
     }
 
@@ -668,85 +673,10 @@ private:
                 BrowseAndInstall(PackageKind::kUpdate);
             }
             ImGui::EndDisabled();
-            if (installed_builds_.size() > 1) {
-                ui.Row("Game version", kGameVersionHelp);
-                GameVersionCombo();
-            }
-            RemoveUpdateRows(ui);
             ui.EndRows();
         }
         ui.Toggle("Show this launcher", kShowLauncherHelp, kShowLauncherKey, true, "Off", "On");
         ui.EndRows();
-    }
-
-    void RemoveUpdateRows(trg::Ui& ui) {
-        const std::vector<const GameBuild*> builds = installed_builds_;
-        for (const GameBuild* build : builds) {
-            if (!IsUpdateBuild(*build)) {
-                continue;
-            }
-            const std::string label = std::string(Tr("Remove update ")) + build->version;
-            const std::string question =
-                std::string(Tr("Remove the ")) + build->label + Tr(" update? 1.00 and your saves are kept.");
-            ImGui::BeginDisabled(install_.running() || prompts_.running() || BuildPinned());
-            const bool confirmed = ui.ConfirmRow(label.c_str(), kRemoveUpdateHelp, "Remove update...", question.c_str(), "Remove");
-            ImGui::EndDisabled();
-            if (confirmed) {
-                RemoveUpdate(*build);
-            }
-        }
-    }
-
-    void RemoveUpdate(const GameBuild& build) {
-        const RemoveResult result = RemoveInstalledUpdate(RootsOf(paths_), build);
-        Log("remove update %s: %s%s%s", build.label, result.ok() ? "removed" : "refused",
-            result.detail.empty() ? "" : ": ", result.detail.c_str());
-        paths_ = ActiveBuildPaths(RootsOf(paths_));
-        Recheck();
-        if (trophy_page_) {
-            trophy_page_->Invalidate();
-        }
-        RefreshPrompts();
-        if (!result.ok()) {
-            launcher_->SetStatus(result.status == RemoveStatus::kInUse
-                                     ? "The update is in use and was not removed. Close the game and try again."
-                                     : "The update could not be removed. See the log.",
-                                 8.0);
-            return;
-        }
-        launcher_->SetStatus(std::string(build.label) + Tr(" removed.") +
-                                 (result.base_selected ? Tr(" USA 1.00 is now the game version.") : ""),
-                             6.0);
-    }
-
-    // Each version has its own folder, so changing it copies nothing.
-    void GameVersionCombo() {
-        ImGui::BeginDisabled(install_.running() || prompts_.running() || BuildPinned());
-        if (ImGui::BeginCombo("##game_version", build_ ? build_->label : "")) {
-            for (const GameBuild* build : installed_builds_) {
-                if (ImGui::Selectable(build->label, build == build_) && build != build_) {
-                    SelectBuild(*build);
-                }
-            }
-            ImGui::EndCombo();
-        }
-        ImGui::EndDisabled();
-    }
-
-    void SelectBuild(const GameBuild& build) {
-        if (!ActivateInstalledBuild(RootsOf(paths_), build)) {
-            Log("game version %s could not be selected", build.label);
-            launcher_->SetStatus("That version could not be selected.", 6.0);
-            return;
-        }
-        Log("game version selected: %s", build.label);
-        paths_ = ActiveBuildPaths(RootsOf(paths_));
-        Recheck();
-        if (trophy_page_) {
-            trophy_page_->Invalidate();
-        }
-        RefreshPrompts();
-        ApplySavedPrompts();
     }
 
     // The desktop's chooser (Windows' own, zenity or kdialog) unless there is none or TSR_FILE_CHOOSER=builtin.
@@ -829,8 +759,6 @@ private:
         if (outcome->ok()) {
             if (outcome->status == InstallStatus::kUpToDate) {
                 Log("game already up to date: %s", outcome->detail.c_str());
-            } else if (outcome->status == InstallStatus::kActivated) {
-                Log("game activated: %s", outcome->build->label);
             } else {
                 Log("game installed: %zu files (%zu linked), %llu bytes", outcome->files, outcome->linked,
                     static_cast<unsigned long long>(outcome->bytes));
@@ -840,9 +768,16 @@ private:
             if (trophy_page_) {
                 trophy_page_->Invalidate();
             }
-            launcher_->SetStatus(std::string(message.title) + ". " + message.text, 6.0);
+            // The highest installed version always plays: installing an older update beside a newer one leaves the
+            // newer one active, so say so instead of letting the player think it just started playing.
+            const GameBuild* active = LastPreparedBuild(RootsOf(paths_));
+            const bool stayed_on_newer = outcome->build && active && active != outcome->build;
+            std::string status = std::string(message.title) + ". " + message.text;
+            if (stayed_on_newer) {
+                status += " " + std::string(active->label) + Tr(" remains the installed version that starts.");
+            }
+            launcher_->SetStatus(status, 6.0);
             RefreshPrompts();
-            ApplySavedPrompts();
             return;
         }
         if (outcome->status == InstallStatus::kCancelled) {
@@ -864,24 +799,15 @@ private:
     void PageDisplay(trg::Ui& ui) {
         ui.Choice("Display mode", "Borderless Fullscreen fills the monitor. F11 switches while playing.", kDisplayModeKey,
                   "windowed", {{"windowed", "Windowed"}, {"borderless", "Borderless Fullscreen"}}, 2);
-        const TsrAspectRatio& previous_aspect = SavedAspectRatio();
         ui.Row("Window size", kWindowSizeHelp);
         WindowSizeCombo();
         ui.Row("Monitor", kMonitorHelp);
         MonitorCombo();
-        std::vector<trg::Option> aspects;
-        const bool restricted = RestrictedToNativeResolution(build_);
-        for (const TsrAspectRatio& aspect : tsr_aspect_ratios) {
-            if (!restricted || std::string_view(aspect.key) == kDefaultAspectRatio) {
-                aspects.push_back({aspect.key, aspect.name});
-            }
+        std::vector<trg::Option> renderers;
+        for (const RendererChoice& choice : kRendererChoices) {
+            renderers.push_back({std::string(choice.key), std::string(choice.name)});
         }
-        ui.Combo("Aspect Ratio", restricted ? kRestrictedAspectRatioHelp : kAspectRatioHelp, kAspectRatioKey,
-                 kDefaultAspectRatio, aspects);
-        if (&SavedAspectRatio() != &previous_aspect) {
-            const int height = settings_.GetInt(kWindowHeightKey, kDefaultWindowHeight);
-            settings_.SetInt(kWindowWidthKey, WindowSizeOf(height, SavedAspectRatio()).width);
-        }
+        ui.Combo("Renderer", kRendererHelp, kRendererKey, kDefaultRenderer, renderers);
         ui.Row("Graphics card", kGraphicsCardHelp);
         GraphicsCardCombo();
         ui.Toggle("VSync", kVSyncHelp, kVSyncKey, true, "Off", "On");
@@ -899,10 +825,6 @@ private:
         ui.EndRows();
     }
 
-    const TsrAspectRatio& SavedAspectRatio() const {
-        return tsr_aspect_ratios[tsr_aspect_index(settings_.Get(kAspectRatioKey, kDefaultAspectRatio).c_str())];
-    }
-
     void WindowSizeCombo() {
         int width = settings_.GetInt(kWindowWidthKey, kDefaultWindowWidth);
         int height = settings_.GetInt(kWindowHeightKey, kDefaultWindowHeight);
@@ -913,7 +835,7 @@ private:
         const WindowSize current{width, height};
         const Display* display = SelectedDisplay();
         if (ImGui::BeginCombo("##window_size", WindowSizeLabel(current).c_str())) {
-            for (const WindowSize size : WindowSizesFor(SavedAspectRatio())) {
+            for (const WindowSize size : WindowSizes()) {
                 const bool selected = size == current;
                 if (!selected && display && !WindowSizeFits(size, *display)) {
                     continue;
@@ -957,14 +879,19 @@ private:
 
     void PageGraphics(trg::Ui& ui) {
         const bool custom = !RestrictedToNativeResolution(build_);
-        std::vector<trg::Option> options;
+        std::vector<const TsrResolution*> listed;
         for (const TsrResolution& resolution : tsr_resolutions) {
             if (custom || std::string_view(resolution.key) == kNativeResolution) {
-                options.push_back({resolution.key, ResolutionLabel(resolution)});
+                listed.push_back(&resolution);
             }
         }
-        ui.Combo("Render resolution", custom ? kRenderResolutionHelp : kRestrictedRenderResolutionHelp,
-                 kRenderResolutionKey, kNativeResolution, options);
+        std::stable_sort(listed.begin(), listed.end(),
+                         [](const TsrResolution* a, const TsrResolution* b) { return a->height < b->height; });
+        std::vector<trg::Option> options;
+        for (const TsrResolution* resolution : listed) {
+            options.push_back({resolution->key, ResolutionLabel(*resolution)});
+        }
+        ui.Combo("Render resolution", kRenderResolutionHelp, kRenderResolutionKey, kNativeResolution, options);
         ui.Toggle("Anti-aliasing", kAntiAliasingHelp, kAntiAliasingKey, false, "Off", "SMAA");
         ui.Combo("Texture filtering", kAnisotropyHelp, kAnisotropyKey, "0",
                  {{"0", "Game"}, {"2", "2x"}, {"4", "4x"}, {"8", "8x"}, {"16", "16x"}});
@@ -1096,7 +1023,7 @@ private:
 
     // The installed archives are the truth here; the setting only remembers the choice for the next install.
     void ControllerIconsCombo(trg::Ui& ui) {
-        if (ui.TaskProgress(prompts_)) {
+        if (ui.TaskProgress(prompts_) || ui.TaskProgress(refresh_)) {
             return;
         }
         const bool ready = files_ == GameFileState::kValid && build_ && !install_.running();
@@ -1117,6 +1044,10 @@ private:
         ImGui::EndDisabled();
     }
 
+    // Opening and parsing a CPK archive's table of contents is not cheap, and this checks every prompt archive twice
+    // over (whether it holds the patch, and whether it still fits one); done here synchronously it was the launcher
+    // freeze reported when switching game versions. It now runs on a worker thread, like installing and patching
+    // already did; PollPromptsRefresh() applies the result once it lands, a frame or more later.
     void RefreshPrompts() {
         if (files_ != GameFileState::kValid || !build_) {
             prompts_installed_ = PromptStyle::kPlayStation;
@@ -1124,14 +1055,35 @@ private:
             xbox_available_ = false;
             return;
         }
-        prompts_state_ = InstalledPromptState(paths_.app0, *build_, XboxPromptsPatch(*build_));
+        if (refresh_.running()) {
+            return; // already refreshing; the result in flight reflects the current files_/build_
+        }
+        refresh_outcome_ = std::make_shared<PromptRefreshResult>();
+        refresh_.Start("Checking controller icons...",
+                       [outcome = refresh_outcome_, app0 = paths_.app0, build = *build_](trg::Task&) {
+                           outcome->state = InstalledPromptState(app0, build, XboxPromptsPatch(build));
+                           const std::optional<BlockPatch> patch = ParseBlockPatch(XboxPromptsPatch(build));
+                           outcome->xbox_available = patch && PromptPatchFits(app0, build, *patch, &outcome->why);
+                           return std::string();
+                       });
+    }
+
+    // Runs every frame so a finished refresh is picked up whichever page is open.
+    void PollPromptsRefresh() {
+        if (refresh_.Finish() == trg::Task::State::kIdle) {
+            return;
+        }
+        const std::shared_ptr<PromptRefreshResult> outcome = std::move(refresh_outcome_);
+        if (!outcome) {
+            return;
+        }
+        prompts_state_ = outcome->state;
         prompts_installed_ = prompts_state_ == PromptState::kXbox ? PromptStyle::kXbox : PromptStyle::kPlayStation;
-        std::string why;
-        const std::optional<BlockPatch> patch = ParseBlockPatch(XboxPromptsPatch(*build_));
-        xbox_available_ = patch && PromptPatchFits(paths_.app0, *build_, *patch, &why);
+        xbox_available_ = outcome->xbox_available;
         Log("controller icons: %s installed%s%s%s", PromptStyleKey(prompts_installed_),
             prompts_state_ == PromptState::kOther ? " (another patch)" : "", xbox_available_ ? "" : ", Xbox unavailable: ",
-            xbox_available_ ? "" : why.c_str());
+            xbox_available_ ? "" : outcome->why.c_str());
+        ApplySavedPrompts();
     }
 
     // After an install or a version change: the archives follow the saved choice again.
@@ -1162,10 +1114,11 @@ private:
     }
 
     void StartPrompts(PromptStyle style, bool restoring) {
-        if (prompts_.running() || install_.running() || !build_) {
-            return;
+        if (prompts_.running() || install_.running() || refresh_.running() || !build_) {
+            return; // refresh_ only reads the same archives, but never alongside a write to them
         }
         prompts_restoring_ = restoring;
+        prompts_requested_ = style;
         prompts_outcome_ = std::make_shared<PromptsResult>();
         const char* title = style == PromptStyle::kXbox ? "Switching to Xbox icons..." : "Restoring PlayStation icons...";
         const bool started = prompts_.Start(
@@ -1200,13 +1153,13 @@ private:
         if (!outcome) {
             return;
         }
-        RefreshPrompts();
+        RefreshPrompts(); // async re-check, for eventual consistency; the message below uses what was just applied
         if (outcome->ok) {
-            Log("controller icons: %s (%s)", PromptStyleKey(prompts_installed_), outcome->detail.c_str());
-            if (!prompts_restoring_ && !settings_.SaveNow({{kControllerIconsKey, PromptStyleKey(prompts_installed_)}})) {
+            Log("controller icons: %s (%s)", PromptStyleKey(prompts_requested_), outcome->detail.c_str());
+            if (!prompts_restoring_ && !settings_.SaveNow({{kControllerIconsKey, PromptStyleKey(prompts_requested_)}})) {
                 Log("could not save the controller icons setting");
             }
-            launcher_->SetStatus(std::string(Tr("Controller icons: ")) + Tr(PromptStyleLabel(prompts_installed_)) + ".", 6.0);
+            launcher_->SetStatus(std::string(Tr("Controller icons: ")) + Tr(PromptStyleLabel(prompts_requested_)) + ".", 6.0);
             return;
         }
         Log("controller icons: %s: %s", outcome->cancelled ? "cancelled" : "failed", outcome->detail.c_str());
@@ -1274,7 +1227,7 @@ private:
 #endif
         ui.InfoGrid({{"Port version", TSR_PORT_VERSION},
                      {"Game", InstalledGameName(files_, build_)},
-                     {"Renderer", "Vulkan"},
+                     {"Renderer", std::string(RendererName(settings_.Get(kRendererKey, kDefaultRenderer)))},
                      {"Platform", platform}});
         char libraries[96];
         std::snprintf(libraries, sizeof(libraries), "SDL %d.%d.%d  \xC2\xB7  Dear ImGui %s  \xC2\xB7  TRG Launcher %s",
@@ -1339,6 +1292,9 @@ private:
     PromptState prompts_state_ = PromptState::kPlayStation;
     bool xbox_available_ = false;
     bool prompts_restoring_ = false;
+    PromptStyle prompts_requested_ = PromptStyle::kPlayStation;
+    std::shared_ptr<PromptRefreshResult> refresh_outcome_;
+    trg::Task refresh_;
     PackageBrowser browser_;
     PackageKind browsing_for_ = PackageKind::kBase;
     std::vector<const GameBuild*> installed_builds_;

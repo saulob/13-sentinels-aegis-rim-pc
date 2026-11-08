@@ -15,34 +15,6 @@ int tsr_resolution_index(const char *key) {
     return 0;
 }
 
-const TsrAspectRatio tsr_aspect_ratios[TSR_ASPECT_COUNT] = {
-    {"16:9", "16:9 Original", 16, 9}, {"16:10", "16:10", 16, 10},       {"21:9", "21:9 Ultrawide", 21, 9},
-    {"32:9", "32:9 Super Ultrawide", 32, 9}, {"4:3", "4:3", 4, 3},      {"5:4", "5:4", 5, 4},
-};
-
-int tsr_aspect_index(const char *key) {
-    for (int i = 0; key && i < TSR_ASPECT_COUNT; ++i)
-        if (!strcmp(key, tsr_aspect_ratios[i].key)) return i;
-    return 0;
-}
-
-static int aligned_width(int height, const TsrAspectRatio *aspect) {
-    const long width = ((long)height * aspect->width * 2 + aspect->height) / (2 * aspect->height);
-    return (int)((width + 4) / 8 * 8);
-}
-
-TsrResolution tsr_render_target(const TsrResolution *resolution, const TsrAspectRatio *aspect) {
-    TsrResolution target = *resolution;
-    if (aspect == &tsr_aspect_ratios[0]) return target;
-    const long budget = 3840L * 2160;
-    int height = resolution->height;
-    while (height > 8 && (long)aligned_width(height, aspect) * height > budget) height -= 8;
-    target.width = aligned_width(height, aspect);
-    target.height = height;
-    if (target.width > 1920 || height > 1080 || (long)target.width * height > 1920L * 1080) target.pro_memory = 1;
-    return target;
-}
-
 static int fail(char *error, size_t size, const char *what, uint32_t offset) {
     snprintf(error, size, "render resolution patch: %s at image offset 0x%x", what, (unsigned)offset);
     return 0;
@@ -60,6 +32,12 @@ int tsr_apply_resolution(unsigned char *image, uint64_t image_size, const TsrRes
         if (memcmp(at, site->opcode, site->opcode_length) || current != site->value)
             return fail(error, error_size, "unexpected instruction", site->offset);
     }
+    for (size_t i = 0; i < count; ++i)
+        for (size_t j = i + 1; j < count; ++j) {
+            const uint32_t a = sites[i].offset, b = sites[j].offset;
+            if (a < b + sites[j].opcode_length + 4u && b < a + sites[i].opcode_length + 4u)
+                return fail(error, error_size, "overlapping sites", b);
+        }
     for (size_t i = 0; i < count; ++i) {
         const uint32_t value = (uint32_t)(sites[i].height ? resolution->height : resolution->width);
         memcpy(image + sites[i].offset + sites[i].opcode_length, &value, 4);

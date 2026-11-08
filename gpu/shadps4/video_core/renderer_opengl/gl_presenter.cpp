@@ -71,8 +71,22 @@ constexpr const char* ShowFragment = R"(
 in vec2 uv;
 out vec4 color;
 uniform sampler2D source;
+// post_process.frag's SampleArea: the frame is reduced to the picture here.
+vec4 SampleArea(sampler2D tex, vec2 uv) {
+    vec2 size = vec2(textureSize(tex, 0));
+    vec2 footprint = abs(vec2(dFdx(uv.x), dFdy(uv.y))) * size;
+    ivec2 taps = clamp(ivec2(ceil(footprint - 0.001)), ivec2(1), ivec2(8));
+    if (taps.x * taps.y == 1) return textureLod(tex, uv, 0.0);
+    vec2 spacing = footprint / vec2(taps) / size;
+    vec2 first = uv - 0.5 * footprint / size + 0.5 * spacing;
+    vec4 sum = vec4(0.0);
+    for (int y = 0; y < taps.y; ++y)
+        for (int x = 0; x < taps.x; ++x)
+            sum += textureLod(tex, first + vec2(x, y) * spacing, 0.0);
+    return sum / float(taps.x * taps.y);
+}
 void main() {
-    color = vec4(texture(source, uv).rgb, 1.0);
+    color = vec4(SampleArea(source, uv).rgb, 1.0);
 }
 )";
 

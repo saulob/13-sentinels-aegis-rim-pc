@@ -100,10 +100,11 @@ void TestProfile() {
         CHECK(BaseBuildOf(update) == &base);
         CHECK(std::string(base.folder) != update.folder);
         CHECK(std::string(base.eboot_sha256) != update.eboot_sha256);
-        CHECK(RestrictedToNativeResolution(&update));
+        CHECK(!RestrictedToNativeResolution(&update));
     }
     CHECK(std::string(Build("1.01").eboot_sha256) != Build("1.02").eboot_sha256);
-    CHECK(RestrictedToNativeResolution(&base));
+    CHECK(!RestrictedToNativeResolution(&base));
+    CHECK(RestrictedToNativeResolution(nullptr) == false);
 }
 
 void TestPackageIdentity() {
@@ -572,12 +573,13 @@ void TestRealInstall() {
     CHECK(CheckGameFiles(BuildPaths(roots, second)).state != GameFileState::kValid);
     CHECK(LastPreparedBuild(roots) == &base);
 
-    // 1.02 straight over the base, then 1.01 beside it.
+    // 1.02 straight over the base, then 1.01 beside it: the higher version stays the effective one (no silent
+    // downgrade) even though 1.01 was installed more recently.
     CHECK(Install(packages.update102, roots, PackageKind::kUpdate).status == InstallStatus::kInstalled);
     CHECK(LastPreparedBuild(roots) == &second);
     CheckUpdateInstalled(roots, second);
     CHECK(Install(packages.update101, roots, PackageKind::kUpdate).status == InstallStatus::kInstalled);
-    CHECK(LastPreparedBuild(roots) == &first);
+    CHECK(LastPreparedBuild(roots) == &second);
     CheckUpdateInstalled(roots, first);
     CHECK(PreparedBuilds(roots).size() == 3);
     const fs::path first_app0 = BuildPaths(roots, first).app0;
@@ -588,13 +590,17 @@ void TestRealInstall() {
     TestVoiceTable(base_app0, first_app0 / "ROBO_PATCH_US.CPK");
     TestVoiceTable(base_app0, second_app0 / "ROBO_PATCH2_US.CPK");
 
+    // There is no version switch any more: every installed build stays individually valid, but only the highest one
+    // (1.02) is effective, whichever of them was looked at or reinstalled last.
     for (const GameBuild* build : {&base, &second, &first, &base, &first}) {
         CHECK(ActivateInstalledBuild(roots, *build));
-        CHECK(LastPreparedBuild(roots) == build);
+        CHECK(LastPreparedBuild(roots) == &second);
         CHECK(CheckGameFiles(BuildPaths(roots, *build)).build == build);
     }
+    CHECK(Install(packages.update101, roots, PackageKind::kUpdate).status == InstallStatus::kUpToDate);
+    CHECK(LastPreparedBuild(roots) == &second);
 
-    // 1.01 is active: removing 1.02 keeps it active; removing 1.01 then selects the base.
+    // 1.02 is effective: removing it falls back to 1.01, still installed, not straight to the base.
     const RemoveResult removed_second = RemoveInstalledUpdate(roots, second);
     CHECK(removed_second.ok() && !removed_second.base_selected);
     CHECK(!fs::exists(second_app0) && !fs::exists(BuildPaths(roots, second).image_dir));
@@ -607,36 +613,27 @@ void TestRealInstall() {
     CHECK(RemoveInstalledUpdate(roots, first).status == RemoveStatus::kNotInstalled);
     CHECK(RemoveInstalledUpdate(roots, base).status == RemoveStatus::kNotUpdate);
 
-    // Reinstalled after removal, then the active update removed with the other still installed.
+    // Reinstalled after removal (1.02 directly over the base again, then 1.01 beside it): 1.02 stays effective.
     CHECK(Install(packages.update102, roots, PackageKind::kUpdate).status == InstallStatus::kInstalled);
     CHECK(Install(packages.update101, roots, PackageKind::kUpdate).status == InstallStatus::kInstalled);
     CheckUpdateInstalled(roots, second);
+    CHECK(LastPreparedBuild(roots) == &second);
+    // Removing the effective (highest) update while a lower one remains falls back to it, not to the base.
+    const RemoveResult removed_active = RemoveInstalledUpdate(roots, second);
+    CHECK(removed_active.ok() && !removed_active.base_selected);
     CHECK(LastPreparedBuild(roots) == &first);
-    const RemoveResult removed_active = RemoveInstalledUpdate(roots, first);
-    CHECK(removed_active.ok() && removed_active.base_selected);
-    CHECK(LastPreparedBuild(roots) == &base);
-    CHECK(CheckGameFiles(BuildPaths(roots, second)).build == &second);
-    CHECK(ActivateInstalledBuild(roots, second));
+    CHECK(CheckGameFiles(BuildPaths(roots, first)).build == &first);
+    CHECK(ActivateInstalledBuild(roots, first));
 
-    // Selecting a version touches its preparation marker; nothing else of the base may change.
-    FileSnapshot base_after = Snapshot(base_app0);
-    CHECK(base_after.erase(kPreparedMarker) == 1 && base_before.count(kPreparedMarker) == 1);
-    FileSnapshot base_expected = base_before;
-    base_expected.erase(kPreparedMarker);
-    for (const auto& [file, state] : base_expected) {
-        const auto after = base_after.find(file);
-        if (after == base_after.end() || after->second != state) {
-            std::printf("FAIL base file changed: %s\n", file.c_str());
-            ++failures;
-        }
-    }
-    CHECK(base_after.size() == base_expected.size());
+    // None of this ever changes the base: no install, removal or validity check of another build touches its
+    // files, not even its preparation marker's timestamp.
+    CHECK(Snapshot(base_app0) == base_before);
     CHECK(Sha256Hex(base_app0 / "eboot.bin") == base.eboot_sha256);
     CHECK(CheckGameFiles(BuildPaths(roots, base)).build == &base);
     CHECK(Snapshot(user) == user_before);
     if (!failures) {
-        std::printf("real install: base, interrupted update, 1.02 alone, 1.01 beside it, switching, removals, reinstall; "
-                    "base files and user files untouched\n");
+        std::printf("real install: base, interrupted update, 1.02 over base, 1.01 beside it (no downgrade), removals "
+                    "fall back by precedence, reinstall; base files and user files untouched\n");
     }
     fs::remove_all(root, ec);
 }

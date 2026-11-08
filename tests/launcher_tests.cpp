@@ -161,6 +161,80 @@ void TestTextLanguages(const fs::path& scratch) {
     CHECK(settings.Get(kTextLanguageKey) == languages.front().key);
 }
 
+void TestRenderer(const fs::path& scratch) {
+    CHECK(std::string(kRendererKey) == "renderer" && std::string(kDefaultRenderer) == "vulkan");
+    bool managed = false;
+    for (const ManagedSetting& setting : ManagedSettings()) {
+        managed |= setting.key == kRendererKey && setting.default_value == "vulkan";
+    }
+    CHECK(managed);
+    for (const char* value : {"auto", "vulkan", "opengl"}) {
+        CHECK(IsValidSetting(kRendererKey, value));
+    }
+    for (const char* invalid : {"", "OpenGL", "direct3d", "D3D11"}) {
+        CHECK(!IsValidSetting(kRendererKey, invalid));
+    }
+#ifdef _WIN32
+    CHECK(IsValidSetting(kRendererKey, "d3d11"));
+    CHECK(RendererName("d3d11") == "Direct3D 11 (experimental)");
+#else
+    CHECK(!IsValidSetting(kRendererKey, "d3d11"));
+#endif
+    CHECK(RendererName("opengl") == "OpenGL (experimental)");
+    CHECK(RendererName("vulkan") == "Vulkan");
+    CHECK(RendererName("bogus") == "Vulkan");
+
+    const fs::path file = scratch / "renderer.ini";
+    CHECK(LauncherSettings(file).Get(kRendererKey, kDefaultRenderer) == "vulkan");
+    {
+        LauncherSettings settings(file);
+        settings.Set(kRendererKey, "opengl");
+        CHECK(settings.Save());
+    }
+    CHECK(LauncherSettings(file).Get(kRendererKey, kDefaultRenderer) == "opengl");
+    {
+        std::ofstream out(file);
+        out << "renderer = metal\n";
+    }
+    CHECK(LauncherSettings(file).Get(kRendererKey, kDefaultRenderer) == "vulkan");
+}
+
+// The Play page no longer offers manual version switching or update removal: installing the highest version and
+// letting it run automatically is the only workflow (launcher.cpp, PagePlay).
+void TestNoVersionSwitchingUi() {
+    const std::string launcher = Read(fs::path(TSR_SOURCE_DIR) / "launcher" / "launcher.cpp");
+    CHECK(!launcher.empty());
+    CHECK(launcher.find("GameVersionCombo") == std::string::npos);
+    CHECK(launcher.find("\"Game version\"") == std::string::npos);
+    CHECK(launcher.find("RemoveUpdateRows") == std::string::npos);
+    CHECK(launcher.find("\"Remove update ") == std::string::npos);
+    CHECK(launcher.find("void SelectBuild(") == std::string::npos);
+    // The Play page still offers exactly Install Game, Install Update and Play.
+    const size_t play_page = launcher.find("void PagePlay(");
+    CHECK(play_page != std::string::npos);
+    CHECK(launcher.find("Install game...", play_page) != std::string::npos);
+    CHECK(launcher.find("Install update...", play_page) != std::string::npos);
+    CHECK(launcher.find("kUpdateHelp", play_page) != std::string::npos);
+}
+
+// The freeze reported when switching game versions: RefreshPrompts() opened and parsed every prompt archive's CPK
+// table of contents synchronously on the GUI thread. It must run on a worker thread (trg::Task), like installing
+// and patching already did, and be polled every frame.
+void TestPromptsRefreshIsAsync() {
+    const std::string launcher = Read(fs::path(TSR_SOURCE_DIR) / "launcher" / "launcher.cpp");
+    CHECK(!launcher.empty());
+    CHECK(launcher.find("trg::Task refresh_;") != std::string::npos);
+    CHECK(launcher.find("void PollPromptsRefresh()") != std::string::npos);
+    CHECK(launcher.find("PollPromptsRefresh();", launcher.find("Outcome Frame()")) != std::string::npos);
+    const size_t refresh = launcher.find("void RefreshPrompts()");
+    const size_t start = launcher.find("refresh_.Start(", refresh);
+    CHECK(refresh != std::string::npos && start != std::string::npos);
+    // The archive inspection itself (InstalledPromptState / PromptPatchFits) runs inside that worker's job, not
+    // directly in RefreshPrompts() on the caller's (GUI) thread.
+    CHECK(launcher.find("InstalledPromptState(", refresh) > start);
+    CHECK(launcher.find("PromptPatchFits(", refresh) > start);
+}
+
 void TestWindowSizes() {
     Display display;
     display.bounds = {0, 0, 1920, 1080};
@@ -174,11 +248,12 @@ void TestWindowSizes() {
     CHECK(!WindowSizeFits(requested, display));
     CHECK(WindowSizeFits(fitted, display));
     CHECK(FitGameWindow({1280, 720}, display) == (WindowSize{1280, 720}));
-    for (const TsrAspectRatio& aspect : tsr_aspect_ratios) {
-        for (const WindowSize size : WindowSizesFor(aspect)) {
-            CHECK(size.width > 0 && size.height > 0);
-        }
+    const std::vector<WindowSize> sizes = WindowSizes();
+    CHECK(sizes.size() == std::size(kWindowHeights));
+    for (const WindowSize size : sizes) {
+        CHECK(std::abs(size.width * 9 - size.height * 16) <= 9);
     }
+    CHECK(sizes[2] == kGamePictureSize);
 }
 
 } // namespace
@@ -193,6 +268,9 @@ int main() {
     TestLauncherGate();
     TestKeyBindings(scratch);
     TestTextLanguages(scratch);
+    TestRenderer(scratch);
+    TestNoVersionSwitchingUi();
+    TestPromptsRefreshIsAsync();
     TestWindowSizes();
     fs::remove_all(scratch, ec);
     std::printf("launcher: %d checks, %d failed\n", checks, failures);

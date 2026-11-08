@@ -88,6 +88,7 @@ set_target_properties(tsr-game-profile-tests PROPERTIES CXX_STANDARD 20 CXX_STAN
 target_compile_options(tsr-game-profile-tests PRIVATE -Wall -Wextra)
 
 add_executable(tsr-launcher-tests EXCLUDE_FROM_ALL ../tests/launcher_tests.cpp)
+target_compile_definitions(tsr-launcher-tests PRIVATE TSR_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 target_link_libraries(tsr-launcher-tests PRIVATE tsr_launcher_core)
 set_target_properties(tsr-launcher-tests PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
 target_compile_options(tsr-launcher-tests PRIVATE -Wall -Wextra)

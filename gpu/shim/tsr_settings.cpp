@@ -77,8 +77,6 @@ void Set(Values& v, const std::string& key, const std::string& value) {
         v.renderer = TsrRenderer::ParseChoice(value);
     } else if (key == "render_resolution") {
         v.render_resolution = TsrGraphics::ParseRenderResolution(value);
-    } else if (key == "aspect_ratio") {
-        v.aspect_ratio = TsrGraphics::ParseAspectRatio(value).key;
     } else if (key == "anisotropy") {
         v.anisotropy = TsrGraphics::ParseAnisotropy(ParseInt(value, 0));
     } else if (key == "window_width") {
