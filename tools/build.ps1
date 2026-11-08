@@ -9,11 +9,14 @@
   The game is installed from the launcher (Play page, Install game...), as in a release.
 .PARAMETER Run
   Launches the loader that was just built and stays attached until the game is closed. The launcher opens first
-  when its rules say so (docs\LAUNCHER.md). Logs to build\logs\13_sentinels_aegis_rim_NNN.log.
+  when its rules say so (docs\LAUNCHER.md). Logs to build\logs\13_sentinels_aegis_rim_NNN.log. The terminal stays
+  concise: the complete run output goes to that log only, and an abnormal exit prints the log folder.
+.PARAMETER VerboseRuntime
+  With -Run, streams the runtime output live into the terminal as well (it is always in the log).
 .PARAMETER Clean
   Deletes build\cmake first (the installed game, the boot image and the logs are kept).
 .PARAMETER CheckImports
-  Diagnostic: with -Run, lists the PS4 imports the runtime lacks instead of running the game.
+  Diagnostic: with -Run, lists the PS4 imports the runtime lacks instead of running the game (output stays live).
 .PARAMETER TimeoutSeconds
   Diagnostic for automated tests only: with -Run, kills the loader after this many seconds (and skips the launcher).
 .PARAMETER LoaderArgs
@@ -21,12 +24,14 @@
 .EXAMPLE
   .\tools\build.ps1
   .\tools\build.ps1 -Run
+  .\tools\build.ps1 -Run -VerboseRuntime
 #>
 [CmdletBinding()]
 param(
     [switch]$Run,
     [switch]$Clean,
     [switch]$CheckImports,
+    [switch]$VerboseRuntime,
     [int]$TimeoutSeconds = 0,
     [Parameter(ValueFromRemainingArguments = $true)][string[]]$LoaderArgs = @()
 )
@@ -104,6 +109,18 @@ $arguments = @()
 if ($CheckImports) { $arguments += '--check-imports' }
 if ($TimeoutSeconds -gt 0) { $arguments += '--tsr-skip-launcher' }
 $arguments += $LoaderArgs
+$quiet = -not ($VerboseRuntime -or $CheckImports -or $TimeoutSeconds -gt 0)
+function Get-LogsDirectory {
+    $index = [array]::LastIndexOf($LoaderArgs, '--logs')
+    if ($index -lt 0 -or $index + 1 -ge $LoaderArgs.Count) { return Join-Path $root 'build\logs' }
+    $dir = $LoaderArgs[$index + 1]
+    if (-not [System.IO.Path]::IsPathRooted($dir)) { $dir = Join-Path (Split-Path $loader -Parent) $dir }
+    return [System.IO.Path]::GetFullPath($dir)
+}
+$logsDir = Get-LogsDirectory
+Write-Step 'Starting 13_sentinels_aegis_rim.exe'
+Write-Host "Runtime logs: $logsDir"
+if ($quiet) { Write-Host 'Run output goes to the log only; -VerboseRuntime streams it here.' }
 Push-Location (Split-Path $loader -Parent)
 try {
     if ($TimeoutSeconds -gt 0) {
@@ -119,6 +136,9 @@ try {
     else {
         # A Windows-subsystem program is not waited for by the call operator.
         $start = @{ FilePath = $loader; NoNewWindow = $true; Wait = $true; PassThru = $true }
+        # The runtime echoes its log to the stdout it inherits; NUL keeps that out of the terminal. Start-Process rejects
+        # the same path for both streams, hence the second spelling.
+        if ($quiet) { $start.RedirectStandardOutput = 'NUL'; $start.RedirectStandardError = '\.\NUL' }
         if ($arguments.Count -gt 0) { $start.ArgumentList = $arguments }
         $code = (Start-Process @start).ExitCode
     }
@@ -127,5 +147,8 @@ finally {
     Pop-Location
 }
 Write-Host "13_sentinels_aegis_rim.exe exit code $code"
-if ($code -eq $loadExecExit) { Write-Host 'The game requested sceSystemServiceLoadExec (see the LoadExec lines above).' }
+if ($code -eq $loadExecExit) {
+    Write-Host ('The game requested sceSystemServiceLoadExec' + $(if ($quiet) { ' (see the runtime log).' } else { ' (see the LoadExec lines above).' }))
+}
+elseif ($code -ne 0 -and $quiet) { Write-Warn "Abnormal exit; see the runtime logs in $logsDir" }
 exit $code

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdio>
 #include <cstring>
 #include <exception>
 #include <fstream>
@@ -648,6 +649,47 @@ const BlockPatchTarget* TargetMatching(const BlockPatch& patch, const std::strin
     return nullptr;
 }
 
+std::string Hex32(uint32_t value) {
+    char text[9];
+    std::snprintf(text, sizeof(text), "%08x", value);
+    return text;
+}
+
+// Why an entry that is neither a target's original nor its result is refused. The replacement blocks tell a file the
+// patch was never made for from a patch that was only partly applied or damaged.
+std::string DescribeMismatch(const BlockPatch& patch, const std::string& name, const std::vector<uint8_t>& data, uint32_t crc,
+                             bool& damaged_patch) {
+    damaged_patch = false;
+    std::string known;
+    const BlockPatchTarget* closest = nullptr;
+    size_t closest_blocks = 0;
+    for (const BlockPatchTarget& target : patch.targets) {
+        if (!IEquals(target.name, name)) continue;
+        known += (known.empty() ? "" : " | ") + std::string("size ") + std::to_string(target.size) + ", original CRC32 " +
+                 Hex32(target.crc_before) + ", patched CRC32 " + Hex32(target.crc_after);
+        if (target.size != data.size()) continue;
+        size_t blocks = 0;
+        for (const BlockRun& run : target.runs) {
+            blocks += uint64_t(run.offset) + 16 <= data.size() && std::memcmp(data.data() + run.offset, run.data.data(), 16) == 0;
+        }
+        if (!closest || blocks > closest_blocks) {
+            closest = &target;
+            closest_blocks = blocks;
+        }
+    }
+    std::string text = "source check: found size " + std::to_string(data.size()) + ", CRC32 " + Hex32(crc) + "; patch copies: " + known + "; ";
+    if (!closest) return text + "no copy has this size";
+    const std::string total = std::to_string(closest->runs.size());
+    if (closest_blocks == 0) {
+        return text + "same size, no replacement block present: not the file the patch was made for";
+    }
+    damaged_patch = true;
+    if (closest_blocks == closest->runs.size()) {
+        return text + "all " + total + " replacement blocks present but the file is not the patch result: damaged patch";
+    }
+    return text + std::to_string(closest_blocks) + " of " + total + " replacement blocks present: partly applied or damaged patch";
+}
+
 // Whether the archive holds this patch and nothing else: every entry of the patch for it is the patched file, and the
 // undo record names exactly those entries.
 bool PatchHolds(const std::filesystem::path& cpk, const BlockPatch& patch) {
@@ -720,13 +762,21 @@ std::vector<EntryReport> InspectArchive(const std::filesystem::path& cpk, const 
     const bool open = archive.Open(cpk);
     std::vector<EntryReport> reports;
     for (const std::string& name : DistinctNames(mine)) {
-        EntryReport report{name, EntryState::kMissing};
+        EntryReport report;
+        report.name = name;
+        report.analysis = open ? "not in the archive" : "the archive cannot be read as a CPK";
         const CpkEntry* entry = open ? archive.Find(name) : nullptr;
         if (entry) {
             const std::vector<uint8_t> data = archive.Read(*entry);
+            report.size = data.size();
+            report.crc = Crc32(data);
+            report.analysis.clear();
             report.state = TargetMatching(mine, name, data, false) ? EntryState::kOriginal
                            : TargetMatching(mine, name, data, true) ? EntryState::kPatched
                                                                     : EntryState::kUnknown;
+            if (report.state == EntryState::kUnknown) {
+                report.analysis = DescribeMismatch(mine, name, data, report.crc, report.damaged_patch);
+            }
         }
         reports.push_back(std::move(report));
     }
@@ -788,7 +838,8 @@ PatchResult PatchWriter::Apply(const std::filesystem::path& cpk, const BlockPatc
         }
         const BlockPatchTarget* target = TargetMatching(patch, entry_name, data, false);
         if (!target) {
-            refuse(entry_name + " is not the file the patch was made for");
+            refuse(entry_name + " is not the file the patch was made for (size " + std::to_string(data.size()) + ", CRC32 " +
+                   Hex32(Crc32(data)) + ")");
             continue;
         }
         for (const BlockRun& run : target->runs) {

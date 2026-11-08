@@ -34,9 +34,10 @@ std::vector<std::filesystem::path> PromptArchives(const std::filesystem::path& a
 
 // True when every prompt archive of the build is present and each entry the patch lists for it is the original file or the
 // patch's result (or the archive carries a patch of its own that its undo record can take back); `detail` names the first
-// that is not.
+// that is not. Every archive is inspected: `unsupported` receives the log lines for each missing archive, missing or
+// unsupported entry (build, archive, entry, size, CRC32 and why no target takes it) and each partly applied patch.
 bool PromptPatchFits(const std::filesystem::path& app0, const GameBuild& build, const BlockPatch& patch,
-                     std::string* detail = nullptr);
+                     std::string* detail = nullptr, std::vector<std::string>* unsupported = nullptr);
 
 bool XboxPromptsAvailable(const std::filesystem::path& app0, const GameBuild& build, std::span<const uint8_t> xbox_patch);
 
@@ -55,11 +56,14 @@ struct PromptsResult {
     bool ok = false;
     bool cancelled = false;
     std::string detail; // for the log
+    std::vector<std::string> unsupported; // log lines for the assets that keep the patch from fitting
+    size_t rolled_back = 0;               // archives read back as original after a failed patch
+    bool rollback_incomplete = false;     // an archive could not be shown to be original again
 };
 
 // Patches or reverts every prompt archive so the game shows `style`. Xbox is all or nothing: nothing is written unless
-// every archive fits, a failure puts back the archives this call already patched, and success means each archive was read
-// back as the patch's result. `linked_folders` are the other installed builds' folders: an archive whose every hard link
+// every archive fits, a failure puts back the archives this call already patched and checks that each reads back as
+// original (`rolled_back`, `rollback_incomplete`), and success means each archive was read back as the patch's result. `linked_folders` are the other installed builds' folders: an archive whose every hard link
 // is in them (and in app0) is patched in place, with its undo record copied beside each link, instead of being copied.
 PromptsResult SetPromptStyle(const std::filesystem::path& app0, const GameBuild& build, PromptStyle style,
                              std::span<const uint8_t> xbox_patch, const PatchHooks& hooks = {},

@@ -20,18 +20,38 @@ static int fail(char *error, size_t size, const char *what, uint32_t offset) {
     return 0;
 }
 
+/* complete, partial or not found: how many sites hold their original instruction. */
+static int refuse_sites(char *error, size_t size, const char *what, uint32_t offset, size_t matching, size_t count) {
+    snprintf(error, size, "render resolution patch: %s (%zu of %zu sites match): %s at image offset 0x%x",
+             matching == 0 ? "not found" : "partial", matching, count, what, (unsigned)offset);
+    return 0;
+}
+
 int tsr_apply_resolution(unsigned char *image, uint64_t image_size, const TsrResolutionSite *sites, size_t count,
                          const TsrResolution *resolution, char *error, size_t error_size) {
+    size_t matching = 0;
+    const TsrResolutionSite *first_bad = NULL;
+    const char *first_what = NULL;
     for (size_t i = 0; i < count; ++i) {
         const TsrResolutionSite *site = &sites[i];
         const uint64_t end = (uint64_t)site->offset + site->opcode_length + 4;
-        if (end > image_size) return fail(error, error_size, "site outside the image", site->offset);
-        const unsigned char *at = image + site->offset;
-        uint32_t current;
-        memcpy(&current, at + site->opcode_length, 4);
-        if (memcmp(at, site->opcode, site->opcode_length) || current != site->value)
-            return fail(error, error_size, "unexpected instruction", site->offset);
+        const char *what = NULL;
+        if (end > image_size) {
+            what = "site outside the image";
+        } else {
+            const unsigned char *at = image + site->offset;
+            uint32_t current;
+            memcpy(&current, at + site->opcode_length, 4);
+            if (memcmp(at, site->opcode, site->opcode_length) || current != site->value) what = "unexpected instruction";
+        }
+        if (!what) {
+            ++matching;
+        } else if (!first_bad) {
+            first_bad = site;
+            first_what = what;
+        }
     }
+    if (first_bad) return refuse_sites(error, error_size, first_what, first_bad->offset, matching, count);
     for (size_t i = 0; i < count; ++i)
         for (size_t j = i + 1; j < count; ++j) {
             const uint32_t a = sites[i].offset, b = sites[j].offset;

@@ -26,6 +26,7 @@
 #include "settings.h"
 #include "tsr_launcher.h"
 #include "language_support.h"
+#include "utf8.h"
 
 namespace fs = std::filesystem;
 using namespace tsr;
@@ -174,6 +175,155 @@ bool AllOriginal(const fs::path& archive, const BlockPatch& patch) {
                                            [](const EntryReport& r) { return r.state == EntryState::kOriginal; });
 }
 
+void Put(std::vector<uint8_t>& out, uint64_t value, int bytes) {
+    for (int i = 0; i < bytes; ++i) {
+        out.push_back(uint8_t(value >> (8 * i)));
+    }
+}
+
+// A DCPX3 file of the patch, headed like `like`; the test edits targets and hands the result to SetPromptStyle.
+std::vector<uint8_t> Serialize(const BlockPatch& patch, std::span<const uint8_t> like) {
+    std::vector<uint8_t> out(like.begin(), like.begin() + 8);
+    Put(out, patch.targets.size(), 4);
+    for (const BlockPatchTarget& target : patch.targets) {
+        for (const std::string& text : {target.archive, target.name}) {
+            Put(out, text.size(), 2);
+            out.insert(out.end(), text.begin(), text.end());
+        }
+        Put(out, target.size, 4);
+        Put(out, target.crc_before, 4);
+        Put(out, target.crc_after, 4);
+        Put(out, target.runs.size(), 4);
+        for (const BlockRun& run : target.runs) {
+            Put(out, run.offset, 4);
+            out.insert(out.end(), run.data.begin(), run.data.end());
+        }
+    }
+    return out;
+}
+
+// The first manual page of the archive in `wrong` that differs from `patch`: the one entry a test made unsupported.
+const BlockPatchTarget* TamperedTarget(const BlockPatch& patch, const BlockPatch& wrong, std::string_view archive) {
+    for (size_t i = 0; i < wrong.targets.size() && i < patch.targets.size(); ++i) {
+        if (wrong.targets[i].archive == archive && wrong.targets[i].crc_before != patch.targets[i].crc_before) {
+            return &wrong.targets[i];
+        }
+    }
+    return nullptr;
+}
+
+std::string Hex8(uint32_t value) {
+    char text[9];
+    std::snprintf(text, sizeof(text), "%08x", value);
+    return text;
+}
+
+bool AnyContains(const std::vector<std::string>& lines, std::string_view text) {
+    return std::any_of(lines.begin(), lines.end(), [&](const std::string& line) { return line.find(text) != std::string::npos; });
+}
+
+// An entry that is not the file the patch was made for is named by build, archive and entry with its size and CRC32, and
+// the check says why no target takes it. Nothing is written, and the build's other archives stay original.
+void TestMismatchReport(const fs::path& app0, const GameBuild& build, const BlockPatch& patch, const fs::path& archive,
+                        const BlockPatch& wrong) {
+    const std::string file = Utf8(archive.filename());
+    const BlockPatchTarget* tampered = TamperedTarget(patch, wrong, file);
+    CHECK(tampered != nullptr);
+    if (!tampered) {
+        return;
+    }
+    CpkArchive reader;
+    CHECK(reader.Open(archive));
+    const CpkEntry* entry = reader.Find(tampered->name);
+    const std::vector<uint8_t> bytes = entry ? reader.Read(*entry) : std::vector<uint8_t>();
+    const std::string identity = std::string("Controller prompts unsupported asset: build ") + build.label + ", archive " + file +
+                                 ", entry " + tampered->name + ", size " + std::to_string(bytes.size()) + ", CRC32 " +
+                                 Hex8(Crc32(bytes));
+    std::string why;
+    std::vector<std::string> lines;
+    CHECK(!PromptPatchFits(app0, build, wrong, &why, &lines));
+    CHECK(why == tampered->name + " in " + file + " is not the file the patch was made for");
+    CHECK(lines.size() == 2 && !lines.empty() && lines[0] == identity);
+    CHECK(AnyContains(lines, "source check: found size " + std::to_string(bytes.size()) + ", CRC32 " + Hex8(Crc32(bytes))));
+    CHECK(AnyContains(lines, "same size, no replacement block present: not the file the patch was made for"));
+    CHECK(AnyContains(lines, "patch copies: size " + std::to_string(tampered->size) + ", original CRC32 " +
+                                 Hex8(tampered->crc_before) + ", patched CRC32 " + Hex8(tampered->crc_after)));
+
+    // The same entry through SetPromptStyle: refused, every archive of the build untouched, the original icons stay.
+    const std::vector<uint8_t> edited = Serialize(wrong, XboxPromptsPatch(build));
+    const PromptsResult result = SetPromptStyle(app0, build, PromptStyle::kXbox, edited);
+    std::error_code ec;
+    CHECK(!result.ok && !result.cancelled && result.rolled_back == 0 && !result.rollback_incomplete);
+    CHECK(result.detail.find("do not fit " + std::string(build.label)) != std::string::npos);
+    CHECK(result.unsupported == lines);
+    CHECK(!fs::exists(UndoPath(archive), ec) && InstalledPromptState(app0, build, edited) == PromptState::kPlayStation);
+
+    // Entries that are not the file are told apart from a missing entry, a missing archive and a partial patch.
+    BlockPatch absent = wrong;
+    for (BlockPatchTarget& target : absent.targets) {
+        if (&target - absent.targets.data() == tampered - wrong.targets.data()) {
+            target.name = "Manual/Manual99.ftx";
+        }
+    }
+    std::vector<std::string> absent_lines;
+    CHECK(!PromptPatchFits(app0, build, absent, nullptr, &absent_lines));
+    CHECK(AnyContains(absent_lines, "Controller prompts missing asset: build " + std::string(build.label) + ", archive " + file +
+                                        ", entry Manual/Manual99.ftx: not in the archive"));
+
+    static const char* const kMissingArchive[] = {"ROBO_FR.CPK", "ROBO_XX.CPK"};
+    GameBuild incomplete = build;
+    incomplete.prompt_archives = kMissingArchive;
+    const PromptsResult gone = SetPromptStyle(app0, incomplete, PromptStyle::kXbox, XboxPromptsPatch(build));
+    CHECK(!gone.ok && gone.unsupported.size() == 1);
+    CHECK(AnyContains(gone.unsupported, "Controller prompts missing archive: build " + std::string(build.label) + ", archive ROBO_XX.CPK"));
+    CHECK(!fs::exists(UndoPath(archive), ec));
+
+    const std::span<const uint8_t> shipped = XboxPromptsPatch(build);
+    CHECK(Serialize(patch, shipped) == std::vector<uint8_t>(shipped.begin(), shipped.end()));
+}
+
+// Some entries carry the patch and no undo record names them: a partial patch, never added to. A file holding all of the
+// patch's replacement blocks without being its result is a damaged patch.
+void TestPartialPatchReport(const fs::path& app0, const GameBuild& build, const BlockPatch& patch, const fs::path& archive,
+                            const std::string& original_bytes, const fs::path& scratch) {
+    const std::string file = Utf8(archive.filename());
+    BlockPatch half;
+    for (const BlockPatchTarget& target : PatchForArchive(patch, archive).targets) {
+        if (half.targets.size() < 2 || target.name == "GUI/Interface.ftx") {
+            half.targets.push_back(target);
+        }
+    }
+    std::error_code ec;
+    CHECK(half.targets.size() < PatchForArchive(patch, archive).targets.size() && ApplyBlockPatch(archive, half).ok);
+    const fs::path saved = scratch / "partial.undo";
+    fs::copy_file(UndoPath(archive), saved, fs::copy_options::overwrite_existing, ec);
+    fs::remove(UndoPath(archive), ec);
+    std::string why;
+    std::vector<std::string> lines;
+    CHECK(!PromptPatchFits(app0, build, patch, &why, &lines));
+    CHECK(why == file + " holds part of the patch without an undo record");
+    CHECK(AnyContains(lines, "Controller prompts partial patch: build " + std::string(build.label) + ", archive " + file + ": "));
+    CHECK(AnyContains(lines, " entries already carry the patch and no undo record names them"));
+    CHECK(!AnyContains(lines, "unsupported asset"));
+
+    // A patch whose result differs from what the archive holds: its blocks are in the file, the file is not the result.
+    BlockPatch damaged = half;
+    damaged.targets.front().crc_before ^= 1;
+    damaged.targets.front().crc_after ^= 1;
+    bool found = false;
+    for (const EntryReport& report : InspectArchive(archive, damaged)) {
+        if (report.name == damaged.targets.front().name) {
+            found = true;
+            CHECK(report.state == EntryState::kUnknown && report.damaged_patch);
+            CHECK(report.analysis.find("all ") != std::string::npos && report.analysis.find("damaged patch") != std::string::npos);
+        }
+    }
+    CHECK(found);
+
+    fs::copy_file(saved, UndoPath(archive), fs::copy_options::overwrite_existing, ec);
+    CHECK(RevertBlockPatch(archive).ok && Read(archive) == original_bytes);
+}
+
 // Real archives of the installed USA 1.00, copied: the patch applied, switched and reverted on the copies.
 void TestRealArchives(const fs::path& scratch) {
     const fs::path game = fs::path(TSR_SOURCE_DIR) / "game" / "prepared" / "CUSA19610-1.00";
@@ -230,6 +380,11 @@ void TestRealArchives(const fs::path& scratch) {
     const PatchResult not_there = ApplyBlockPatch(fr, missing);
     CHECK(!not_there.ok && not_there.detail.find("missing") != std::string::npos);
     CHECK(Read(fr) == original_fr && !fs::exists(UndoPath(fr), ec));
+    CHECK(refused.detail.find("size ") != std::string::npos && refused.detail.find("CRC32 ") != std::string::npos);
+
+    // The refusal names the build, archive and entry with the file's size and CRC32, and says why no target takes it.
+    TestMismatchReport(a, one, *patch, fr, wrong);
+    TestPartialPatchReport(a, one, *patch, fr, original_fr, scratch);
 
     // A patch of another kind already in the archive is detected, replaced on request, and taken back byte for byte.
     BlockPatch earlier = *patch;
@@ -271,6 +426,31 @@ void TestRealArchives(const fs::path& scratch) {
     CHECK(Read(fr) == original_fr && Read(ge) == original_ge);
     CHECK(!fs::exists(UndoPath(fr), ec) && !fs::exists(UndoPath(ge), ec));
     CHECK(InstalledPromptState(a, two, xbox) == PromptState::kPlayStation);
+    CHECK(failed.rolled_back == 2 && !failed.rollback_incomplete && failed.unsupported.empty());
+    CHECK(failed.detail.find("rollback: 2 of 2 archives read back as original") != std::string::npos);
+    CHECK(SetPromptStyle(a, two, PromptStyle::kPlayStation, xbox).ok && Read(fr) == original_fr);
+
+    // The first archive's undo record is damaged before the second one fails: the rollback cannot take it back, and says so.
+    {
+        std::string real_undo;
+        PatchHooks damage;
+        damage.phase = [&](const char* text) {
+            if (std::string_view(text) == "Patching ROBO_GE.CPK...") {
+                real_undo = Read(UndoPath(fr));
+                std::ofstream(UndoPath(fr), std::ios::binary | std::ios::trunc) << "damaged";
+            }
+        };
+        SetReadOnly(ge, true);
+        const PromptsResult stuck = SetPromptStyle(a, two, PromptStyle::kXbox, xbox, damage);
+        SetReadOnly(ge, false);
+        CHECK(!stuck.ok && stuck.rollback_incomplete && stuck.rolled_back == 1);
+        CHECK(stuck.detail.find("not restored: ROBO_FR.CPK") != std::string::npos);
+        CHECK(Read(ge) == original_ge && !fs::exists(UndoPath(ge), ec));
+        CHECK(InstalledPromptState(a, two, xbox) != PromptState::kXbox);
+        CHECK(!real_undo.empty());
+        std::ofstream(UndoPath(fr), std::ios::binary | std::ios::trunc) << real_undo;
+        CHECK(RevertBlockPatch(fr).ok && Read(fr) == original_fr && !fs::exists(UndoPath(fr), ec));
+    }
 
     // A hard-linked archive of another installed build is patched in place, with no copy, and reverted the same way.
     const fs::path b = scratch / "b", c = scratch / "c";
@@ -328,6 +508,16 @@ void TestInstalledPrompts() {
         CHECK(!EnglishVoicesAvailable(base, &Build("1.02")));
         const LanguageSupport support = LanguagesOf(base, &build);
         CHECK(support.text.size() == 5 && !support.english_voices);
+    }
+    const fs::path first = fs::path(TSR_SOURCE_DIR) / "game" / "prepared" / "CUSA19610-1.01";
+    if (fs::is_regular_file(first / "ROBO_PATCH_US.CPK", ec)) {
+        const GameBuild& build = Build("1.01");
+        const std::optional<BlockPatch> patch = ParseBlockPatch(XboxPromptsPatch(build));
+        std::string why;
+        std::vector<std::string> lines;
+        CHECK(patch && PromptPatchFits(first, build, *patch, &why, &lines) && why.empty() && lines.empty());
+    } else {
+        std::printf("skipped: no installed USA 1.01 (game\\prepared\\CUSA19610-1.01): its prompt fit\n");
     }
     const fs::path update = fs::path(TSR_SOURCE_DIR) / "game" / "prepared" / "CUSA19610-1.02";
     if (!fs::is_regular_file(update / "ROBO_PATCH_US.CPK", ec)) {

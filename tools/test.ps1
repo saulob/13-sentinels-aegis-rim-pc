@@ -164,6 +164,7 @@ $steps = @(
     (Step 'SaveData' 'mounts, files, handles, errors, interrupted writes, metadata, user save copy' 'tsr-savedata-tests'),
     (Step 'Packages' 'identities 1.00/1.01/1.02, real packages, installs, highest-version precedence, update removal, isolation, voice banks, boot images, prompt art export' 'tsr-game-profile-tests'),
     (Step 'Packages' 'Xbox prompt art coverage (Python, on the entries the step above exported)' -Block { Invoke-PromptArt }),
+    (Step 'Packages' 'release scripts (static): ZIP and executable hashes, nothing uploaded or published, quiet run with a log file' -Block { Invoke-Script 'tests\release_script_tests.ps1' }),
     (Step 'Launcher' 'tsr.ini persistence, validation, launcher gate, keys, languages, window sizes' 'tsr-launcher-tests'),
     (Step 'Launcher' 'Bug Report: JSON, service address, log choice, privacy filter, report and preview, client against a stand-in transport, My Reports, nothing sent on its own' 'tsr-bug-report-tests'),
     (Step 'Launcher' 'Bug Report service (Node, disposable database): submission, receipts, limits, retention, admin, dashboard, and the launcher''s own request' -Block { Invoke-BugReportService }),

@@ -14,12 +14,14 @@ NO GAME FILES ARE INCLUDED
 You need your own legally obtained copy of the game: a decrypted 13 Sentinels:
 Aegis Rim PS4 package (.pkg). This port runs:
 
-  USA: Title ID CUSA19610, version 1.00 (the base package), and optionally 1.02
-       (the base package, then the update)
+  USA: Title ID CUSA19610, versions 1.00 (the base package), 1.01 and 1.02
+       (each update is installed over the base package)
 
-The base game plays on its own; the 1.02 update can be installed later from
-the launcher's Play page and leaves 1.00 installed. Any other version is
-refused. A package still encrypted for a PS4 console cannot be unpacked on a PC.
+The base game plays on its own; an update can be installed later from the
+launcher's Play page and leaves 1.00 installed. The launcher detects the
+installed builds by itself and starts the newest supported update you have
+installed; there is no version to pick. Any other version is refused. A package
+still encrypted for a PS4 console cannot be unpacked on a PC.
 
 This is an early development release: the game has not been verified to boot.
 
@@ -43,8 +45,8 @@ INSTALL
 3. On the Play page, click "Install game..." and select your USA 1.00 .pkg
    file. The launcher checks the package and unpacks it into the "game" folder
    next to the program. The .pkg file is only read.
-4. Optional: click "Install update..." and select the 1.02 update .pkg file.
-   1.00 stays installed; "Game version" on the Play page chooses which starts.
+4. Optional: click "Install update..." and select the 1.01 or 1.02 update .pkg
+   file. 1.00 stays installed; the newest installed update starts.
 5. Press PLAY.
 
 To repair the game files, use "Reinstall game..." on the Play page. Your

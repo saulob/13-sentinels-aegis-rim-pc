@@ -31,6 +31,32 @@ static void test_real_sites(void) {
         CHECK(skip_intro_locate(base.bytes, base.size, "CUSA19610-1.00", &site) == SKIP_INTRO_MISMATCH);
         base.bytes[0x3aff67 + 1] = saved;
 
+        /* Each refusal says which check failed: unique at another offset, not found, ambiguous, call, function. */
+        char why[160];
+        CHECK(skip_intro_locate_why(base.bytes, base.size, "CUSA19610-1.00", &site, why, sizeof(why)) == SKIP_INTRO_FOUND && !why[0]);
+        CHECK(skip_intro_locate_why(base.bytes, base.size, "CUSA19610-1.02", &site, why, sizeof(why)) == SKIP_INTRO_MISMATCH &&
+              !strcmp(why, "logo scene code: unique match at 0x3aff4d, expected 0x36a92d"));
+        CHECK(skip_intro_locate_why(base.bytes, base.size, "CUSA10602-1.00", &site, why, sizeof(why)) == SKIP_INTRO_UNKNOWN_BUILD);
+        base.bytes[0x3aff67 + 1] ^= 0x10;
+        CHECK(skip_intro_locate_why(base.bytes, base.size, "CUSA19610-1.00", &site, why, sizeof(why)) == SKIP_INTRO_MISMATCH &&
+              strstr(why, "button poll call: target 0x") && strstr(why, "expected 0x36f400"));
+        base.bytes[0x3aff67 + 1] = saved;
+        base.bytes[0x36f400] ^= 1;
+        CHECK(skip_intro_locate_why(base.bytes, base.size, "CUSA19610-1.00", &site, why, sizeof(why)) == SKIP_INTRO_MISMATCH &&
+              !strcmp(why, "button poll function at 0x36f400: code differs"));
+        base.bytes[0x36f400] ^= 1;
+        base.bytes[0x3aff4d] ^= 1;
+        CHECK(skip_intro_locate_why(base.bytes, base.size, "CUSA19610-1.00", &site, why, sizeof(why)) == SKIP_INTRO_MISMATCH &&
+              !strcmp(why, "logo scene code: not found"));
+        base.bytes[0x3aff4d] ^= 1;
+        uint8_t spare[64];
+        memcpy(spare, base.bytes + 0x10000, sizeof(spare));
+        memcpy(base.bytes + 0x10000, base.bytes + 0x3aff4d, sizeof(spare));
+        CHECK(skip_intro_locate_why(base.bytes, base.size, "CUSA19610-1.00", &site, why, sizeof(why)) == SKIP_INTRO_MISMATCH &&
+              !strcmp(why, "logo scene code: ambiguous (2 matches, expected 1)"));
+        memcpy(base.bytes + 0x10000, spare, sizeof(spare));
+        CHECK(skip_intro_locate(base.bytes, base.size, "CUSA19610-1.00", &site) == SKIP_INTRO_FOUND && site == 0x3aff67);
+
         uint8_t stubs[256];
         CHECK(!skip_intro_install(base.bytes, base.size, base.entry, "CUSA19610-1.02", stubs, sizeof(stubs)));
         CHECK(base.bytes[0x3aff67] == 0xe8);

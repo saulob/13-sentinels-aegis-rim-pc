@@ -128,6 +128,10 @@ enum class EntryState {
 struct EntryReport {
     std::string name;
     EntryState state = EntryState::kMissing;
+    uint64_t size = 0;    // of the entry as read; 0 when it could not be
+    uint32_t crc = 0;
+    bool damaged_patch = false; // kUnknown, yet some or all of the patch's replacement blocks are in it
+    std::string analysis;       // kMissing and kUnknown: why no target takes it
 };
 
 // Each entry the patch lists for this archive, read from it.

@@ -305,6 +305,7 @@ struct PromptRefreshResult {
     PromptState state = PromptState::kPlayStation;
     bool xbox_available = false;
     std::string why;
+    std::vector<std::string> unsupported;
 };
 
 class LauncherApp {
@@ -756,12 +757,18 @@ private:
             return;
         }
         const InstallMessage message = DescribeInstall(outcome->status);
+        if (!outcome->recognition.empty()) {
+            Log("%s", outcome->recognition.c_str());
+        }
         if (outcome->ok()) {
             if (outcome->status == InstallStatus::kUpToDate) {
                 Log("game already up to date: %s", outcome->detail.c_str());
             } else {
                 Log("game installed: %zu files (%zu linked), %llu bytes", outcome->files, outcome->linked,
                     static_cast<unsigned long long>(outcome->bytes));
+                if (outcome->build) {
+                    Log("final prepared build: %s (%s)", outcome->build->label, outcome->build->folder);
+                }
             }
             paths_ = ActiveBuildPaths(RootsOf(paths_));
             Recheck();
@@ -1063,7 +1070,8 @@ private:
                        [outcome = refresh_outcome_, app0 = paths_.app0, build = *build_](trg::Task&) {
                            outcome->state = InstalledPromptState(app0, build, XboxPromptsPatch(build));
                            const std::optional<BlockPatch> patch = ParseBlockPatch(XboxPromptsPatch(build));
-                           outcome->xbox_available = patch && PromptPatchFits(app0, build, *patch, &outcome->why);
+                           outcome->xbox_available =
+                               patch && PromptPatchFits(app0, build, *patch, &outcome->why, &outcome->unsupported);
                            return std::string();
                        });
     }
@@ -1083,6 +1091,16 @@ private:
         Log("controller icons: %s installed%s%s%s", PromptStyleKey(prompts_installed_),
             prompts_state_ == PromptState::kOther ? " (another patch)" : "", xbox_available_ ? "" : ", Xbox unavailable: ",
             xbox_available_ ? "" : outcome->why.c_str());
+        std::string unsupported;
+        for (const std::string& line : outcome->unsupported) {
+            unsupported += line + '\n';
+        }
+        if (unsupported != unsupported_logged_) {
+            for (const std::string& line : outcome->unsupported) {
+                Log("%s", line.c_str());
+            }
+            unsupported_logged_ = std::move(unsupported);
+        }
         ApplySavedPrompts();
     }
 
@@ -1137,7 +1155,11 @@ private:
                 if (outcome->ok) {
                     return std::string();
                 }
-                return std::string(outcome->cancelled ? "Cancelled" : "Could not change the game files");
+                if (outcome->cancelled) {
+                    return std::string("Cancelled");
+                }
+                return std::string(outcome->unsupported.empty() ? "Could not change the game files"
+                                                                : "Controller icons are not available for this game version");
             });
         if (started) {
             Log("controller icons: switching to %s", PromptStyleKey(style));
@@ -1163,8 +1185,18 @@ private:
             return;
         }
         Log("controller icons: %s: %s", outcome->cancelled ? "cancelled" : "failed", outcome->detail.c_str());
-        launcher_->SetStatus(outcome->cancelled ? "Game files unchanged." : "Could not change the game files. See the log.",
-                             8.0);
+        for (const std::string& line : outcome->unsupported) {
+            Log("%s", line.c_str());
+        }
+        const char* status = "Could not change the game files. See the log.";
+        if (outcome->cancelled) {
+            status = "Game files unchanged.";
+        } else if (outcome->rollback_incomplete) {
+            status = "Could not restore every game file. Please provide the log.";
+        } else if (!outcome->unsupported.empty()) {
+            status = "Controller icons are not available for this game version. Please provide the log.";
+        }
+        launcher_->SetStatus(status, 8.0);
     }
 
     std::filesystem::path UserDir() const { return PathFromUtf8(config_.user_dir ? config_.user_dir : "user"); }
@@ -1295,6 +1327,7 @@ private:
     bool prompts_restoring_ = false;
     PromptStyle prompts_requested_ = PromptStyle::kPlayStation;
     std::shared_ptr<PromptRefreshResult> refresh_outcome_;
+    std::string unsupported_logged_; // the prompt asset lines last logged, so a refresh repeats nothing
     trg::Task refresh_;
     PackageBrowser browser_;
     PackageKind browsing_for_ = PackageKind::kBase;

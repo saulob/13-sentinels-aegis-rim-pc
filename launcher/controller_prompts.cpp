@@ -1,6 +1,7 @@
 #include "controller_prompts.h"
 
 #include <algorithm>
+#include <cstdio>
 #include <system_error>
 
 #include "prompts_patch.h"
@@ -61,18 +62,83 @@ bool ReadsBackPatched(const fs::path& archive, const BlockPatch& patch) {
                                            [](const EntryReport& r) { return r.state == EntryState::kPatched; });
 }
 
-bool EntriesFit(const fs::path& archive, const BlockPatch& patch, std::string& why) {
-    for (const EntryReport& report : InspectArchive(archive, patch)) {
-        if (report.state == EntryState::kMissing) {
-            why = report.name + " is not in " + Utf8(archive.filename());
-            return false;
-        }
-        if (report.state == EntryState::kUnknown) {
-            why = report.name + " in " + Utf8(archive.filename()) + " is not the file the patch was made for";
-            return false;
+std::string Hex32(uint32_t value) {
+    char text[9];
+    std::snprintf(text, sizeof(text), "%08x", value);
+    return text;
+}
+
+std::string Where(const GameBuild& build, const fs::path& archive) {
+    return std::string("build ") + build.label + ", archive " + Utf8(archive.filename());
+}
+
+void AddLine(std::vector<std::string>* lines, std::string line) {
+    if (lines) {
+        lines->push_back(std::move(line));
+    }
+}
+
+bool NoteMissingArchives(const fs::path& app0, const GameBuild& build, std::vector<std::string>* lines) {
+    bool any = false;
+    std::error_code ec;
+    for (const char* name : build.prompt_archives) {
+        if (!fs::is_regular_file(app0 / name, ec)) {
+            AddLine(lines, std::string("Controller prompts missing archive: build ") + build.label + ", archive " + name);
+            any = true;
         }
     }
-    return true;
+    return any;
+}
+
+// Inspects every entry, so the log names each file that keeps the patch out, not only the first.
+bool EntriesFit(const GameBuild& build, const fs::path& archive, const BlockPatch& patch, std::string& why,
+                std::vector<std::string>* lines) {
+    const std::string name = Utf8(archive.filename());
+    size_t original = 0, patched = 0, total = 0;
+    bool fits = true;
+    const auto refuse = [&](std::string text) {
+        if (fits) {
+            why = std::move(text);
+        }
+        fits = false;
+    };
+    for (const EntryReport& report : InspectArchive(archive, patch)) {
+        ++total;
+        original += report.state == EntryState::kOriginal;
+        patched += report.state == EntryState::kPatched;
+        if (report.state == EntryState::kMissing) {
+            refuse(report.name + " is not in " + name);
+            AddLine(lines, "Controller prompts missing asset: " + Where(build, archive) + ", entry " + report.name + ": " +
+                               report.analysis);
+        } else if (report.state == EntryState::kUnknown) {
+            refuse(report.name + " in " + name + " is not the file the patch was made for");
+            AddLine(lines, std::string(report.damaged_patch ? "Controller prompts partial or damaged patch: "
+                                                            : "Controller prompts unsupported asset: ") +
+                               Where(build, archive) + ", entry " + report.name + ", size " + std::to_string(report.size) +
+                               ", CRC32 " + Hex32(report.crc));
+            AddLine(lines, "Controller prompts " + report.analysis + " (archive " + name + ", entry " + report.name + ")");
+        }
+    }
+    if (fits && patched && original) {
+        refuse(name + " holds part of the patch without an undo record");
+        AddLine(lines, "Controller prompts partial patch: " + Where(build, archive) + ": " + std::to_string(patched) + " of " +
+                           std::to_string(total) + " entries already carry the patch and no undo record names them");
+    }
+    return fits;
+}
+
+// An archive is back as it was when it has no undo record and none of the patch's entries still reads as patched.
+std::string RestoreProblem(const fs::path& archive, const BlockPatch& patch) {
+    const std::string name = Utf8(archive.filename());
+    if (ArchiveState(archive) == ArchivePatchState::kPatched) {
+        return name + ": the undo record is still there";
+    }
+    for (const EntryReport& report : InspectArchive(archive, patch)) {
+        if (report.state == EntryState::kPatched) {
+            return name + ": " + report.name + " is still patched";
+        }
+    }
+    return {};
 }
 
 } // namespace
@@ -118,27 +184,35 @@ std::vector<fs::path> PromptArchives(const fs::path& app0, const GameBuild& buil
     return out;
 }
 
-bool PromptPatchFits(const fs::path& app0, const GameBuild& build, const BlockPatch& patch, std::string* detail) {
+bool PromptPatchFits(const fs::path& app0, const GameBuild& build, const BlockPatch& patch, std::string* detail,
+                     std::vector<std::string>* unsupported) {
+    std::string first;
     const auto refuse = [&](std::string why) {
-        if (detail) {
-            *detail = std::move(why);
+        if (first.empty()) {
+            first = std::move(why);
         }
-        return false;
     };
-    const std::vector<fs::path> archives = PromptArchives(app0, build);
-    if (build.prompt_archives.empty() || archives.size() != build.prompt_archives.size()) {
-        return refuse("a prompt archive is missing");
+    if (build.prompt_archives.empty()) {
+        refuse("the build lists no prompt archive");
     }
-    for (const fs::path& archive : archives) {
+    if (NoteMissingArchives(app0, build, unsupported)) {
+        refuse("a prompt archive is missing");
+    }
+    for (const fs::path& archive : PromptArchives(app0, build)) {
         if (PatchForArchive(patch, archive).targets.empty()) {
-            return refuse("the patch lists nothing for " + Utf8(archive.filename()));
+            refuse("the patch lists nothing for " + Utf8(archive.filename()));
+            AddLine(unsupported, "Controller prompts: the patch lists nothing for " + Where(build, archive));
+            continue;
         }
         std::string why;
-        if (!Revertible(archive) && !EntriesFit(archive, patch, why)) {
-            return refuse(why);
+        if (!Revertible(archive) && !EntriesFit(build, archive, patch, why, unsupported)) {
+            refuse(why);
         }
     }
-    return true;
+    if (detail && !first.empty()) {
+        *detail = first;
+    }
+    return first.empty();
 }
 
 bool XboxPromptsAvailable(const fs::path& app0, const GameBuild& build, std::span<const uint8_t> xbox_patch) {
@@ -177,6 +251,9 @@ PromptsResult SetPromptStyle(const fs::path& app0, const GameBuild& build, Promp
     const std::vector<fs::path> archives = PromptArchives(app0, build);
     if (archives.empty() || archives.size() != build.prompt_archives.size()) {
         result.detail = "a prompt archive of " + std::string(build.label) + " is missing in " + Utf8(app0);
+        if (style == PromptStyle::kXbox) {
+            NoteMissingArchives(app0, build, &result.unsupported);
+        }
         return result;
     }
     std::optional<BlockPatch> patch;
@@ -187,18 +264,27 @@ PromptsResult SetPromptStyle(const fs::path& app0, const GameBuild& build, Promp
             result.detail = "no Xbox icons for " + std::string(build.label) + (error.empty() ? "" : ": " + error);
             return result;
         }
-        if (std::string why; !PromptPatchFits(app0, build, *patch, &why)) {
+        if (std::string why; !PromptPatchFits(app0, build, *patch, &why, &result.unsupported)) {
             result.detail = "Xbox icons do not fit " + std::string(build.label) + ": " + why;
             return result;
         }
     }
     const auto rollback = [&](const std::vector<fs::path>& done) {
+        std::string problems;
         for (const fs::path& archive : done) {
             const Links links = LinksOf(archive, linked_folders);
             const PatchResult undone = RevertBlockPatch(archive, links.options);
             SyncUndo(archive, links);
-            note("rolled back " + undone.detail);
+            const std::string problem = undone.ok ? RestoreProblem(archive, *patch) : undone.detail;
+            if (problem.empty()) {
+                ++result.rolled_back;
+            } else {
+                problems += (problems.empty() ? "" : "; ") + problem;
+            }
         }
+        result.rollback_incomplete = !problems.empty();
+        note("rollback: " + std::to_string(result.rolled_back) + " of " + std::to_string(done.size()) +
+             " archives read back as original" + (problems.empty() ? "" : "; not restored: " + problems));
     };
     std::vector<fs::path> touched;
     for (const fs::path& archive : archives) {

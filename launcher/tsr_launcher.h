@@ -113,6 +113,9 @@ typedef struct {
 /* The supported game build a boot image folder was built from (its image.json); 0 when it is not one. */
 int tsr_game_build(const char *image_dir, TsrGameBuild *build);
 
+/* Why tsr_game_build finds no supported build there, as one line for the log. */
+void tsr_game_build_problem(const char *image_dir, char *out, size_t size);
+
 typedef enum {
     TSR_LAUNCHER_PLAY = 0,
     TSR_LAUNCHER_QUIT = 1,

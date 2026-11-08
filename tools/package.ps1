@@ -1,7 +1,7 @@
 <#
 .SYNOPSIS
   Packages the tested build as dist\13SentinelsAegisRimPC-v<version>-windows-x64 (folder, ZIP and .zip.sha256). Local only:
-  nothing is published, tagged or uploaded.
+  nothing is published, tagged or uploaded. It prints the SHA-256 of the ZIP and of each executable in it.
 .DESCRIPTION
   Builds with tools\build.ps1 (the one RelWithDebInfo configuration) unless -SkipBuild, then stages 13_sentinels_aegis_rim.exe
   and 13_sentinels_launcher.exe without their debug information, the MSYS2 DLLs it loads (found by walking its imports), README.txt, LICENSE.txt and
@@ -357,7 +357,11 @@ Write-Host ''
 Write-Host 'RELEASE PACKAGE READY (nothing was published)' -ForegroundColor Green
 Write-Host "  Folder:   $stage ($(Format-Size $stageBytes), $($files.Count) files)"
 Write-Host "  ZIP:      $zip ($(Format-Size (Get-Item -LiteralPath $zip).Length))"
-Write-Host "  SHA-256:  $hash"
+Write-Host "  Windows ZIP SHA-256:                $hash"
+foreach ($program in @('13_sentinels_aegis_rim.exe', '13_sentinels_launcher.exe')) {
+    Write-Host ("  {0} SHA-256: {1}" -f $program.PadRight(28), (Get-FileHash -LiteralPath (Join-Path $stage $program) -Algorithm SHA256).Hash.ToLowerInvariant())
+}
+Write-Host '  VirusTotal: scan the ZIP and both executables separately (docs\RELEASE_SECURITY.md); uploads are manual'
 Write-Host "  Symbols:  $symbols (not in the package)"
 Write-Host "  Loader:   $(Format-Size (Get-Item -LiteralPath $loader).Length) built, $(Format-Size (Get-Item -LiteralPath (Join-Path $stage '13_sentinels_aegis_rim.exe')).Length) packaged"
 Write-Host "  DLLs:     $($dlls.Count), $(Format-Size $dllBytes)"

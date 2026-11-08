@@ -228,7 +228,15 @@ void TestRefusals() {
                                    sizeof(error)) == 0);
         CHECK(broken == before);
         CHECK(std::string(error).find("unexpected instruction") != std::string::npos);
+        CHECK(std::string(error).find("partial (" + std::to_string(sites.size() - 1) + " of " + std::to_string(sites.size()) +
+                                      " sites match)") != std::string::npos);
     }
+    // Nothing matches: reported as not found, the image untouched.
+    std::vector<unsigned char> blank(image.size(), 0x90);
+    const std::vector<unsigned char> blank_before = blank;
+    CHECK(tsr_apply_resolution(blank.data(), blank.size(), sites.data(), sites.size(), &k4, error, sizeof(error)) == 0);
+    CHECK(blank == blank_before &&
+          std::string(error).find("not found (0 of " + std::to_string(sites.size()) + " sites match)") != std::string::npos);
     std::vector<unsigned char> wrong_opcode = image;
     wrong_opcode[sites[3].offset] = 0xba;
     const std::vector<unsigned char> before = wrong_opcode;

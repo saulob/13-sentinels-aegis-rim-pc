@@ -121,6 +121,19 @@ const GameBuild* BuildOfSfo(const std::string& sfo, std::span<const GameBuild> b
     return nullptr;
 }
 
+// Why an executable is not the one param.sfo names, and when it is another supported build's, that the files mix builds.
+std::string ExecutableMismatch(const GameBuild& named, const std::string& sha, std::span<const GameBuild> builds) {
+    std::string text = "eboot.bin is not the supported build: SHA-256 " + sha + ", param.sfo names " + named.label +
+                       " (executable " + named.eboot_sha256 + ")";
+    for (const GameBuild& other : builds) {
+        if (&other != &named && sha == other.eboot_sha256) {
+            text += "; it is the executable of " + std::string(other.label) +
+                    ", so the files mix builds (stale executable, or an update that was not applied)";
+        }
+    }
+    return text;
+}
+
 const GameBuild* BuildOfImageReport(const std::string& report, std::span<const GameBuild> builds) {
     const std::string title = JsonString(report, "title_id");
     const std::string sha = JsonString(report, "eboot_sha256");
@@ -430,7 +443,7 @@ GameCheck CheckGameTree(const std::filesystem::path& app0, std::span<const GameB
         return Result(GameFileState::kReadError, "cannot read eboot.bin", {}, &build);
     }
     if (sha != build.eboot_sha256) {
-        return Result(GameFileState::kDifferentVersion, "eboot.bin is not the supported build", sha, &build);
+        return Result(GameFileState::kDifferentVersion, ExecutableMismatch(build, sha, builds), sha, &build);
     }
     return Result(GameFileState::kValid, {}, sha, &build);
 }
@@ -465,7 +478,8 @@ GameCheck CheckGameFiles(const GamePaths& paths, std::span<const GameBuild> buil
     const GameBuild& build = *tree.build;
     const std::string& sha = tree.eboot_sha256;
     if (version != build.version) {
-        return Result(GameFileState::kDifferentVersion, "prepared version " + version, sha, &build);
+        return Result(GameFileState::kDifferentVersion,
+                      "prepared version " + version + " but the game files are " + build.label, sha, &build);
     }
     for (const char* name : kImageFiles) {
         if (!IsRegularNonEmpty(paths.image_dir / name)) {
@@ -494,7 +508,23 @@ const GameBuild* BuildOfImageDir(const char* image_dir) {
     return BuildOfImageReport(report, SupportedBuilds());
 }
 
+// Why a boot image folder is not one of a supported build, for the loader's log.
+std::string ImageBuildProblem(const char* image_dir) {
+    std::string report;
+    if (!image_dir || !ReadSmallFile(PathFromUtf8(image_dir) / "image.json", report)) {
+        return "the boot image report (image.json) cannot be read";
+    }
+    return "boot image of title " + Shown(JsonString(report, "title_id")) + ", APP_VER " + Shown(JsonString(report, "app_ver")) +
+           ", eboot SHA-256 " + Shown(JsonString(report, "eboot_sha256")) + " is not the executable of " + SupportedBuildsText();
+}
+
 } // namespace tsr
+
+extern "C" void tsr_game_build_problem(const char* image_dir, char* out, size_t size) {
+    if (out && size) {
+        std::snprintf(out, size, "%s", tsr::ImageBuildProblem(image_dir).c_str());
+    }
+}
 
 // The supported build a boot image folder was built from, for the loader; 0 when it is not one.
 extern "C" int tsr_game_build(const char* image_dir, TsrGameBuild* out) {

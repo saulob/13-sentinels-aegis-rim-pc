@@ -43,6 +43,7 @@ struct InstallResult {
     InstallStatus status = InstallStatus::kInstalled;
     std::string detail; // for the log, not the UI
     std::vector<std::string> diagnostics; // kUnsupportedBuild: the block for the log
+    std::string recognition; // a recognized package: its file, build, kind and layer, for the log
     uint64_t bytes = 0;
     size_t files = 0, linked = 0;
     const GameBuild* build = nullptr; // the build that was installed

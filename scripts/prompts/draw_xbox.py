@@ -25,9 +25,9 @@ SPRITES = {
         disc_white={'tri': 279, 'circle': 280, 'square': 281, 'cross': 282},
         disc_colour={'tri': 294, 'circle': 296, 'square': 298, 'cross': 300},
         flat={'tri': 295, 'circle': 297, 'square': 299, 'cross': 301},
-        outline={'tri': 139, 'circle': 136, 'square': 146},
+        outline={'tri': 139, 'circle': 136, 'square': 146, 'cross': 144},
         faint={'tri': 140, 'circle': 137, 'cross': 141, 'square': 142},
-        glow={'circle': 135, 'tri': 138, 'square': 145},
+        glow={'circle': 135, 'tri': 138, 'square': 145, 'cross': 143},
         digits={'B': 311, 'T': 312},
         ovals={'MENU': 283, 'VIEW': 285}, words={'MENU': 284, 'VIEW': 286},
         logos=[287, 309], pad=304),
@@ -35,18 +35,21 @@ SPRITES = {
         disc_white={'tri': 289, 'circle': 290, 'square': 291, 'cross': 292},
         disc_colour={'tri': 304, 'circle': 309, 'square': 313, 'cross': 317},
         flat={'tri': 305, 'circle': 310, 'square': 314, 'cross': 318},
-        outline={'tri': 140, 'circle': 137, 'square': 152},
+        outline={'tri': 140, 'circle': 137, 'square': 152, 'cross': 143},
         faint={'tri': 141, 'circle': 138, 'cross': 144, 'square': 145},
-        glow={'circle': 136, 'tri': 139, 'square': 151},
+        glow={'circle': 136, 'tri': 139, 'square': 151, 'cross': 142},
         digits={'B': 336, 'T': 341},
         ovals={'MENU': 293, 'VIEW': 295}, words={'MENU': 294, 'VIEW': 296},
         logos=[297, 332], pad=323),
 }
+# BUTTON_BATSU draws the Cross outline and glow as a "+" sprite turned 45 degrees counter-clockwise on screen.
+TURNED = {('outline', 'cross'): 45, ('glow', 'cross'): 45}
 # Flat shapes no sprite entry names on its own (found by matching the flat shapes against the whole atlas).
 EXTRA = {
     '100': [((900, 130, 960, 190), 'circle', 'outline'), ((962, 192, 1018, 248), 'square', 'outline'),
             ((762, 250, 834, 312), 'tri', 'flat'), ((836, 248, 896, 311), 'cross', 'flat')],
-    '102': [((410, 836, 458, 884), 'square', 'flat')],
+    '102': [((410, 836, 458, 884), 'square', 'flat'), ((502, 494, 574, 556), 'tri', 'flat'),
+            ((504, 690, 564, 750), 'circle', 'outline'), ((600, 690, 660, 753), 'cross', 'flat')],
 }
 # The OPTIONS and TOUCHPAD words of the lower-left label block, the same place in both atlases.
 BLOCK_WORDS = {(206, 346, 384, 390): 'MENU', (206, 399, 402, 443): 'VIEW'}
@@ -171,14 +174,17 @@ def clear_rect(a, rect, changed):
     a[own] = 0
 
 
-def paint_symbol(a, rect, letter, mode, font, changed):
+def paint_symbol(a, rect, letter, mode, font, changed, turn=0):
     """Replaces a flat PlayStation shape (and its outline, faint and glow variants) by the Xbox letter, in the same
-    style: the sprite is cleared and the letter drawn where the shape was."""
+    style: the sprite is cleared and the letter drawn where the shape was. A sprite the game turns by `turn` degrees
+    gets the letter turned back, smaller so it fits the sprite."""
     box = ink_box(a, rect)
     x0, y0, x1, y1 = box
     height = y1 - y0
     pad = 6
     area = (max(rect[0], x0 - pad), max(rect[1], y0 - pad), min(rect[2], x1 + pad), min(rect[3], y1 + pad))
+    if turn:
+        area, height = rect, height * 0.8
     clear_rect(a, rect, changed)
     size = (area[2] - area[0], area[3] - area[1])
     if mode == 'flat':
@@ -189,6 +195,8 @@ def paint_symbol(a, rect, letter, mode, font, changed):
         layer = letter_layer(size, letter, font, height * 0.9, WHITE, blur=1.2, alpha=0.45)
     else:
         layer = letter_layer(size, letter, font, height * 0.85, WHITE, blur=max(2.0, height * 0.08), alpha=0.95)
+    if turn:
+        layer = layer.rotate(-turn, Image.BICUBIC)
     paste(a, area, layer)
     changed[area[1]:area[3], area[0]:area[2]] = True
 
@@ -283,7 +291,7 @@ def paint(a, mbs, version, font):
         paint_disc(a, rect(i), LETTER[symbol], True, font, changed)
     for mode in ('flat', 'outline', 'faint', 'glow'):
         for symbol, i in sprites[mode].items():
-            paint_symbol(a, rect(i), LETTER[symbol], mode, font, changed)
+            paint_symbol(a, rect(i), LETTER[symbol], mode, font, changed, TURNED.get((mode, symbol), 0))
     for box, symbol, mode in EXTRA[version]:
         paint_symbol(a, box, LETTER[symbol], mode, font, changed)
     for text, i in sprites['digits'].items():

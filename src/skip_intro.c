@@ -1,5 +1,6 @@
 #include "skip_intro.h"
 
+#include <stdarg.h>
 #include <stdatomic.h>
 #include <stdio.h>
 #include <string.h>
@@ -51,24 +52,48 @@ void GUEST_HOOK_ABI skip_intro_hook(GuestRegs *regs) {
     regs->skip = 1;
 }
 
-SkipIntroLocate skip_intro_locate(const uint8_t *image, uint64_t size, const char *build, uint32_t *site) {
+static SkipIntroLocate mismatch(char *why, size_t why_size, const char *format, ...) {
+    if (why && why_size) {
+        va_list args;
+        va_start(args, format);
+        vsnprintf(why, why_size, format, args);
+        va_end(args);
+    }
+    return SKIP_INTRO_MISMATCH;
+}
+
+SkipIntroLocate skip_intro_locate_why(const uint8_t *image, uint64_t size, const char *build, uint32_t *site, char *why,
+                                      size_t why_size) {
+    if (why && why_size) why[0] = 0;
     const BuildSite *known = NULL;
     for (size_t i = 0; build && i < sizeof(kBuilds) / sizeof(*kBuilds); ++i) {
         if (!strcmp(build, kBuilds[i].build)) known = &kBuilds[i];
     }
     if (!known) return SKIP_INTRO_UNKNOWN_BUILD;
     uint64_t first = 0;
-    if (code_signature_count(image, size, kScene, sizeof(kScene) / sizeof(*kScene), &first) != 1 || first != known->scene)
-        return SKIP_INTRO_MISMATCH;
+    const size_t scenes = code_signature_count(image, size, kScene, sizeof(kScene) / sizeof(*kScene), &first);
+    if (scenes == 0) return mismatch(why, why_size, "logo scene code: not found");
+    if (scenes > 1) return mismatch(why, why_size, "logo scene code: ambiguous (%zu matches, expected 1)", scenes);
+    if (first != known->scene)
+        return mismatch(why, why_size, "logo scene code: unique match at 0x%llx, expected 0x%x", (unsigned long long)first,
+                        (unsigned)known->scene);
     const uint32_t call = known->scene + kCallInScene;
     int32_t displacement;
     memcpy(&displacement, image + call + 1, 4);
-    if ((int64_t)call + kCallLength + displacement != (int64_t)known->poll) return SKIP_INTRO_MISMATCH;
-    if ((uint64_t)known->poll + sizeof(kPoll) / sizeof(*kPoll) > size ||
-        !code_signature_matches(image + known->poll, kPoll, sizeof(kPoll) / sizeof(*kPoll)))
-        return SKIP_INTRO_MISMATCH;
+    const int64_t target = (int64_t)call + kCallLength + displacement;
+    if (target != (int64_t)known->poll)
+        return mismatch(why, why_size, "button poll call: target 0x%llx, expected 0x%x", (unsigned long long)target,
+                        (unsigned)known->poll);
+    if ((uint64_t)known->poll + sizeof(kPoll) / sizeof(*kPoll) > size)
+        return mismatch(why, why_size, "button poll function: outside the image");
+    if (!code_signature_matches(image + known->poll, kPoll, sizeof(kPoll) / sizeof(*kPoll)))
+        return mismatch(why, why_size, "button poll function at 0x%x: code differs", (unsigned)known->poll);
     if (site) *site = call;
     return SKIP_INTRO_FOUND;
+}
+
+SkipIntroLocate skip_intro_locate(const uint8_t *image, uint64_t size, const char *build, uint32_t *site) {
+    return skip_intro_locate_why(image, size, build, site, NULL, 0);
 }
 
 size_t skip_intro_stub_bytes(void) { return guest_hook_stub_size(); }
@@ -76,13 +101,15 @@ size_t skip_intro_stub_bytes(void) { return guest_hook_stub_size(); }
 int skip_intro_install(uint8_t *image, uint64_t size, uint64_t entry, const char *build, uint8_t *stubs,
                        size_t stubs_size) {
     uint32_t site = 0;
-    switch (skip_intro_locate(image, size, build, &site)) {
+    char why[160];
+    switch (skip_intro_locate_why(image, size, build, &site, why, sizeof(why))) {
     case SKIP_INTRO_FOUND: break;
     case SKIP_INTRO_UNKNOWN_BUILD:
         printf("Skip Intro: not installed: not a verified game build\n");
         return 0;
     case SKIP_INTRO_MISMATCH:
-        printf("Skip Intro: not installed: the logo scene code of %s is not the verified one\n", build);
+        printf("Skip Intro: not installed: the logo scene code of %s is not the verified one (%s); the game's own behavior is kept\n",
+               build, why);
         return 0;
     }
     GuestHook hook = {"skip intro", site, kCallLength, {0}, skip_intro_hook};

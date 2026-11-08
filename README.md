@@ -29,9 +29,8 @@ CUSA18093 Asia) are recognized and refused with a diagnostic block in the log.
 3. Optional: **Play → Install update...** and select the 1.01 or the 1.02 update package (either, or both; 1.01 is
    not needed for 1.02). Each update gets a folder of its own made of hard links to the base plus the update's files,
    so 1.00 stays installed exactly as it was (about 0.6 GB more each).
-4. With more than one installed, **Game version** on the Play page chooses which one starts. Nothing is copied.
-   **Remove update** deletes one update's own folder and boot image; 1.00, the other update, saves, trophies and
-   settings are kept, and 1.00 becomes the game version when the removed update was.
+4. Installed builds are detected automatically. With more than one installed, the launcher starts the newest supported
+   installed update (1.02, then 1.01, then 1.00); there is no version to choose, and nothing is copied.
 5. **Play**.
 
 The installer stages everything next to the active installation, verifies it (identity, required archives, eboot hash,
@@ -41,7 +40,7 @@ or a base package in Install update, is refused before anything is unpacked.
 
 ## Launcher
 
-TRG Launcher pages: **Play** (install game, install update, game version, remove update), **Display**, **Graphics**, **Gameplay**
+TRG Launcher pages: **Play** (install game, install update), **Display**, **Graphics**, **Gameplay**
 (text language, voice language note, skip intro, frame readouts, overlay programs), **Controls** (detected controllers,
 controller icons, keyboard bindings, port hotkeys),
 **Trophies** (kept on this PC), **Bug Report**, **About** (folders, logs, diagnostics, sponsor). There is no Online

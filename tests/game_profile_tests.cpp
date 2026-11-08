@@ -21,7 +21,8 @@
 #include <string>
 #include <vector>
 
-#include "boot_image.h"
+#include "../launcher/boot_image.h"
+#include "build_diagnostics.h"
 #include "controller_prompts.h"
 #include "cpk_patch.h"
 #include "crypto.h"
@@ -369,6 +370,9 @@ void ExportArt(Package& package, const char* archive_name, const GameBuild& vers
         CHECK(WriteEntry(before / archive_name, entry, root / "original" / FlatName(entry)));
         CHECK(WriteEntry(after / archive_name, entry, root / "patched" / FlatName(entry)));
     }
+    CHECK(SetPromptStyle(after, single, PromptStyle::kPlayStation, XboxPromptsPatch(version)).ok);
+    CHECK(Read(after / archive_name) == Read(before / archive_name));
+    CHECK(InstalledPromptState(after, single, XboxPromptsPatch(version)) == PromptState::kPlayStation);
     fs::remove_all(root / "original" / "files", ec);
     fs::remove_all(root / "patched" / "files", ec);
 }
@@ -559,8 +563,14 @@ void TestRealInstall() {
     Write(user / "tsr.ini", "voice_language = english\n");
     const FileSnapshot user_before = Snapshot(user);
 
-    CHECK(Install(packages.update101, roots, PackageKind::kUpdate).status == InstallStatus::kUpdateNeedsBase);
-    CHECK(Install(packages.base, roots, PackageKind::kBase).status == InstallStatus::kInstalled);
+    const InstallResult needs_base = Install(packages.update101, roots, PackageKind::kUpdate);
+    CHECK(needs_base.status == InstallStatus::kUpdateNeedsBase);
+    CHECK(needs_base.detail.find("the base CUSA19610 1.00 USA is not installed") != std::string::npos);
+    CHECK(needs_base.recognition.find("is CUSA19610 1.01 USA (update, layer 2 of 2, laid over CUSA19610 1.00 USA)") !=
+          std::string::npos);
+    const InstallResult base_install = Install(packages.base, roots, PackageKind::kBase);
+    CHECK(base_install.status == InstallStatus::kInstalled);
+    CHECK(base_install.recognition.find("is CUSA19610 1.00 USA (base, layer 1 of 1)") != std::string::npos);
     const fs::path base_app0 = BuildPaths(roots, base).app0;
     CHECK(Sha256Hex(base_app0 / "eboot.bin") == base.eboot_sha256);
     CHECK(!EnglishVoicesAvailable(base_app0, &base));
@@ -747,6 +757,72 @@ void TestLocalInstall(const fs::path& scratch) {
     std::printf("local install %s %s: valid, boot image reproduced, wrong signature refused\n", base.title_id, base.version);
 }
 
+bool AnyLine(const std::vector<std::string>& lines, std::string_view text) {
+    return std::any_of(lines.begin(), lines.end(), [&](const std::string& line) { return line.find(text) != std::string::npos; });
+}
+
+// What an unsupported or mismatched build is reported as. The installed game's executables are only read; every other
+// file here is a stand-in that only has to exist.
+void TestBuildDiagnostics(const fs::path& scratch) {
+    const std::string unknown_update = PackageSfo(kTitle, kContent, "gp", "01.03", "01.00");
+    const fs::path odd = scratch / "diagnostics-odd";
+    Write(odd / "sce_sys" / "param.sfo", unknown_update);
+    Write(odd / "eboot.bin", std::string(4096, 'x'));
+    const UnsupportedReport report = DiagnoseUnsupportedBuild(*OpenFolderSource(odd), unknown_update);
+    CHECK(report.recognized && !report.lines.empty() && report.lines.front() == kDiagnosticsBegin &&
+          report.lines.back() == kDiagnosticsEnd);
+    CHECK(AnyLine(report.lines, "this is an update package or folder (CATEGORY gp)"));
+    CHECK(AnyLine(report.lines, "supported build of this TITLE_ID: CUSA19610 1.00 USA (base game, APP_VER 01.00"));
+    CHECK(AnyLine(report.lines, "supported build of this TITLE_ID: CUSA19610 1.02 USA (base game with update, APP_VER 01.02"));
+    CHECK(AnyLine(report.lines, "identity check: param.sfo APP_VER 01.03 / VERSION 01.00 is not part of a supported build"));
+    CHECK(AnyLine(report.lines, "eboot.bin: 4096 bytes, SHA-256 "));
+    CHECK(AnyLine(report.lines, "eboot.bin matches no supported executable (CUSA19610 1.00 USA, CUSA19610 1.01 USA and CUSA19610 1.02 USA)"));
+    CHECK(AnyLine(report.lines, "Skip Intro, Exit Game and Render resolution are tied to a supported build's exact code and stay off"));
+    CHECK(!DiagnoseUnsupportedBuild(*OpenFolderSource(odd), PackageSfo("CUSA00000", "XX0000-CUSA00000_00-OTHERGAME", "gd", "01.00", "01.00")).recognized);
+
+    const fs::path prepared = fs::path(TSR_SOURCE_DIR) / "game" / "prepared";
+    const fs::path real100 = prepared / Build("1.00").folder, real102 = prepared / Build("1.02").folder;
+    std::error_code ec;
+    if (!fs::is_regular_file(real100 / "eboot.bin", ec) || !fs::is_regular_file(real102 / "eboot.bin", ec)) {
+        std::printf("skipped: no installed USA 1.00 and 1.02 (game\\prepared): executable recognition checks\n");
+        return;
+    }
+    const std::string sfo100 = PackageSfo(kTitle, kContent, "gd", "01.00", "01.00");
+    const std::string sfo102 = PackageSfo(kTitle, kContent, "gp", "01.02", "01.00");
+    const UnsupportedReport matching = DiagnoseUnsupportedBuild(*OpenFolderSource(real100), sfo100);
+    CHECK(AnyLine(matching.lines, "eboot.bin is the executable of CUSA19610 1.00 USA") && !AnyLine(matching.lines, "stale"));
+    const UnsupportedReport stale = DiagnoseUnsupportedBuild(*OpenFolderSource(real100), sfo102);
+    CHECK(AnyLine(stale.lines, "eboot.bin is the executable of CUSA19610 1.00 USA, but param.sfo names CUSA19610 1.02 USA: "
+                               "the executable or the update is stale or mismatched"));
+    const UnsupportedReport unnamed = DiagnoseUnsupportedBuild(*OpenFolderSource(real102), unknown_update);
+    CHECK(AnyLine(unnamed.lines, "eboot.bin is the executable of CUSA19610 1.02 USA, but param.sfo names no supported build"));
+
+    // The game folder check says the same: another supported build's executable means mixed files.
+    const GameBuild& named = Build("1.02");
+    const fs::path mixed = scratch / "diagnostics-mixed";
+    Write(mixed / "sce_sys" / "param.sfo", sfo102);
+    for (const char* name : kSharedGameFiles) {
+        if (std::string_view(name) != "eboot.bin" && std::string_view(name) != "sce_sys/param.sfo") {
+            Write(mixed / name, "x");
+        }
+    }
+    Write(mixed / named.regional_archive, "x");
+    for (const char* name : named.extra_files) {
+        Write(mixed / name, "x");
+    }
+    fs::copy_file(real100 / "eboot.bin", mixed / "eboot.bin", fs::copy_options::overwrite_existing, ec);
+    const GameCheck mixed_check = CheckGameTree(mixed);
+    CHECK(mixed_check.state == GameFileState::kDifferentVersion && mixed_check.build == &named);
+    CHECK(mixed_check.detail.find(std::string("eboot.bin is not the supported build: SHA-256 ") + Build("1.00").eboot_sha256 +
+                                  ", param.sfo names CUSA19610 1.02 USA") != std::string::npos);
+    CHECK(mixed_check.detail.find("it is the executable of CUSA19610 1.00 USA, so the files mix builds") != std::string::npos);
+    Write(mixed / "eboot.bin", "not an executable");
+    const GameCheck foreign_check = CheckGameTree(mixed);
+    CHECK(foreign_check.state == GameFileState::kDifferentVersion && foreign_check.detail.find("SHA-256 ") != std::string::npos);
+    CHECK(foreign_check.detail.find("mix builds") == std::string::npos);
+    std::printf("build diagnostics: unsupported executable, stale executable, mixed files and unknown update reported\n");
+}
+
 } // namespace
 
 int main() {
@@ -761,6 +837,7 @@ int main() {
     TestLanguages(scratch);
     TestMessages();
     TestScriptsAgree();
+    TestBuildDiagnostics(scratch);
     TestRealPackages(scratch);
     TestRealInstall();
     TestRemoveUpdateSafety(scratch);

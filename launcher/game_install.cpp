@@ -546,7 +546,8 @@ InstallResult InstallUpdatePackage(const fs::path& source, Package& package, con
     const GamePaths base = BuildPaths(roots, *base_build);
     if (const GameCheck base_check = CheckGameTree(base.app0, builds);
         base_check.state != GameFileState::kValid || base_check.build != base_build) {
-        return Failure(InstallStatus::kUpdateNeedsBase, base_check.detail);
+        return Failure(InstallStatus::kUpdateNeedsBase,
+                       std::string("the base ") + base_build->label + " is not installed: " + base_check.detail);
     }
     if (!IsReplaceable(layout.app0, kPreparedMarker) || !IsReplaceable(layout.image, "boot.bin")) {
         return Failure(InstallStatus::kForeignFolder, Utf8(layout.app0) + " or " + Utf8(layout.image));
@@ -727,6 +728,18 @@ InstallResult InstallGame(const fs::path& source, const GameRoots& roots, const 
                                         : InstallFromPackage(source, roots, hooks, builds);
 }
 
+// The package as recognized: its build, whether it is the base or an update, and the base an update goes over.
+static std::string PackageRecognition(const fs::path& file, const GameCheck& identity, std::span<const GameBuild> builds) {
+    const GameBuild& build = *identity.build;
+    std::string text = "package recognized: " + Utf8(file.filename()) + " is " + build.label + " (" +
+                       (identity.layer > 0 ? "update" : "base") + ", layer " + std::to_string(identity.layer + 1) + " of " +
+                       std::to_string(build.layers.size());
+    if (const GameBuild* base = BaseBuildOf(build, builds); base && identity.layer > 0) {
+        text += std::string(", laid over ") + base->label;
+    }
+    return text + ")";
+}
+
 InstallResult InstallFromPackage(const fs::path& package_file, const GameRoots& roots, const InstallHooks& hooks,
                                  std::span<const GameBuild> builds) {
     const auto phase = [&](const char* text) {
@@ -756,26 +769,31 @@ InstallResult InstallFromPackage(const fs::path& package_file, const GameRoots& 
         return Failure(FromCheck(identity), identity.detail);
     }
     const GameBuild& build = *identity.build;
+    const std::string recognition = PackageRecognition(source, identity, builds);
+    const auto recognized = [&](InstallResult result) {
+        result.recognition = recognition;
+        return result;
+    };
     if (hooks.expected == PackageKind::kBase && identity.layer > 0) {
-        return Failure(InstallStatus::kExpectedBasePackage, std::string("update package for ") + build.label);
+        return recognized(Failure(InstallStatus::kExpectedBasePackage, std::string("update package for ") + build.label));
     }
     if (hooks.expected == PackageKind::kUpdate && identity.layer == 0) {
-        return Failure(InstallStatus::kExpectedUpdatePackage, std::string("base package for ") + build.label);
+        return recognized(Failure(InstallStatus::kExpectedUpdatePackage, std::string("base package for ") + build.label));
     }
     if (std::optional<InstallResult> reused = ReuseInstalledBuild(roots, builds, build, hooks.replace_active)) {
-        return *reused;
+        return recognized(*reused);
     }
     const PackageResult loaded = package.LoadFiles();
     if (loaded.ok()) {
         if (std::optional<InstallResult> foreign = RejectForeignExecutable(package, identity)) {
-            return *foreign;
+            return recognized(*foreign);
         }
     }
     const Layout layout(BuildPaths(roots, build));
     if (identity.layer > 0) {
-        return InstallUpdatePackage(source, package, loaded, layout, roots, hooks, builds, build);
+        return recognized(InstallUpdatePackage(source, package, loaded, layout, roots, hooks, builds, build));
     }
-    return InstallBasePackage(source, package, loaded, layout, hooks, builds, build);
+    return recognized(InstallBasePackage(source, package, loaded, layout, hooks, builds, build));
 }
 
 InstallResult InstallFromFolder(const fs::path& source_dir, const GameRoots& roots, const InstallHooks& hooks,

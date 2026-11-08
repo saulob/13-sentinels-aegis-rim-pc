@@ -23,6 +23,11 @@ typedef enum {
  * the build's offset, and call the build's button poll. *site gets the call's image offset. */
 SkipIntroLocate skip_intro_locate(const uint8_t *image, uint64_t size, const char *build, uint32_t *site);
 
+/* The same; on SKIP_INTRO_MISMATCH `why` names the check that failed: not found, ambiguous (N matches), unique at
+ * another offset, or the poll call or function differing. */
+SkipIntroLocate skip_intro_locate_why(const uint8_t *image, uint64_t size, const char *build, uint32_t *site, char *why,
+                                      size_t why_size);
+
 size_t skip_intro_stub_bytes(void);
 
 /* Hooks the poll call and arms the one-shot press. Writes nothing and returns 0, saying why, when the build or its code

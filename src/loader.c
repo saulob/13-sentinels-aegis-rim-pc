@@ -557,6 +557,11 @@ int main(int argc, char **argv) {
     TsrGameBuild game_build;
     const int known_build=tsr_game_build(paths.image_dir,&game_build);
     printf("TSR: game build %s\n",known_build ? game_build.label : "not a supported build");
+    if (!known_build) {
+        char problem[512];
+        tsr_game_build_problem(paths.image_dir,problem,sizeof(problem));
+        printf("TSR: %s; Render resolution, Skip Intro and Exit Game stay off and the game code is unchanged\n",problem);
+    }
     char build_key[64]="";
     if (known_build) snprintf(build_key,sizeof(build_key),"%s-%s",game_build.title_id,game_build.version);
     const char *pinned_build=getenv("TSR_GAME_BUILD");

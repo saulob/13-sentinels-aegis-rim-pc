@@ -178,19 +178,48 @@ void DescribeIdentity(Lines& out, const std::string& sfo, const GameSource& sour
     for (const char* key : {"TITLE", "TITLE_ID", "CONTENT_ID", "APP_VER", "VERSION", "CATEGORY"}) {
         out.Add("  %s: %s", key, Shown(SfoString(sfo, key)).c_str());
     }
+    const std::string category = SfoString(sfo, "CATEGORY");
+    out.Add("  this is %s", category == "gp" ? "an update package or folder (CATEGORY gp)"
+                           : category == "gd" ? "a base game package or folder (CATEGORY gd)"
+                                              : "of unknown kind (CATEGORY is not gd or gp)");
     for (const GameBuild& build : SupportedBuilds()) {
         if (SfoString(sfo, "TITLE_ID") == build.title_id) {
             const PackageLayer& layer = FinishedLayer(build);
-            out.Add("  supported build of this TITLE_ID: %s (APP_VER %s, VERSION %s, eboot SHA-256 %s)", build.label,
-                    layer.app_ver, layer.sfo_version, build.eboot_sha256);
+            out.Add("  supported build of this TITLE_ID: %s (%s, APP_VER %s, VERSION %s, eboot SHA-256 %s)", build.label,
+                    IsUpdateBuild(build) ? "base game with update" : "base game", layer.app_ver, layer.sfo_version,
+                    build.eboot_sha256);
         }
     }
+    const GameCheck identity = CheckPackageIdentity(sfo);
+    out.Add("  identity check: %s", identity.detail.empty() ? "matches a supported build" : identity.detail.c_str());
 }
 
-void DescribeExecutables(Lines& out, const GameSource& source) {
+const GameBuild* BuildOfExecutable(const std::string& sha) {
+    for (const GameBuild& build : SupportedBuilds()) {
+        if (sha == build.eboot_sha256) {
+            return &build;
+        }
+    }
+    return nullptr;
+}
+
+void DescribeExecutables(Lines& out, const GameSource& source, const std::string& sfo) {
     Bytes bytes;
     if (source.Read("eboot.bin", kMaxExecutable, bytes)) {
-        out.Add("eboot.bin: %zu bytes, SHA-256 %s", bytes.size(), Shown(Sha256Of(bytes)).c_str());
+        const std::string sha = Sha256Of(bytes);
+        out.Add("eboot.bin: %zu bytes, SHA-256 %s", bytes.size(), Shown(sha).c_str());
+        const GameBuild* executable = BuildOfExecutable(sha);
+        const GameBuild* named = CheckSfoIdentity(sfo).build;
+        if (!executable) {
+            out.Add("  eboot.bin matches no supported executable (%s)", SupportedBuildsText().c_str());
+            out.Add("  Skip Intro, Exit Game and Render resolution are tied to a supported build's exact code and stay off");
+        } else if (named != executable) {
+            out.Add("  eboot.bin is the executable of %s, but param.sfo %s: the executable or the update is stale or "
+                    "mismatched",
+                    executable->label, named ? (std::string("names ") + named->label).c_str() : "names no supported build");
+        } else {
+            out.Add("  eboot.bin is the executable of %s", executable->label);
+        }
     } else {
         out.Add("eboot.bin: missing or unreadable");
     }
@@ -235,7 +264,7 @@ UnsupportedReport DiagnoseUnsupportedBuild(const GameSource& source, const std::
     out.Add(kDiagnosticsBegin);
     out.Add("The game was recognized as 13 Sentinels: Aegis Rim, but this exact build is not supported; nothing was installed.");
     DescribeIdentity(out, sfo, source);
-    DescribeExecutables(out, source);
+    DescribeExecutables(out, source, sfo);
     DescribeFiles(out, source.Files());
     out.Add(kDiagnosticsEnd);
     report.recognized = true;
