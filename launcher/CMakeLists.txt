@@ -28,7 +28,8 @@ target_link_libraries(tsr_imgui_sdl PUBLIC SDL3::SDL3)
 # Game files (check, PKG unpacking, install, boot image), the trophies (src/trophies), the settings file and the Display
 # options: no window needed (tests link only this).
 find_package(ZLIB REQUIRED)
-add_library(tsr_launcher_core STATIC boot_image.cpp build_diagnostics.cpp file_browser.cpp game_files.cpp game_install.cpp
+add_library(tsr_launcher_core STATIC boot_image.cpp build_diagnostics.cpp controller_prompts.cpp cpk_patch.cpp language_support.cpp
+    file_browser.cpp game_files.cpp game_install.cpp
     game_process.cpp game_profile.cpp header_art.cpp incident_report.cpp log_scrubber.cpp options.cpp page_icons.cpp
     paths.cpp pkg_extract.cpp resolution.c settings.cpp trophy_content.cpp crypto_win.cpp
     ${PROJECT_SOURCE_DIR}/src/trophies/trophy_data.cpp ${PROJECT_SOURCE_DIR}/src/trophies/trophy_key.cpp
@@ -52,6 +53,20 @@ add_custom_command(OUTPUT ${TSR_PAGE_ICON_SOURCE}
     DEPENDS ${TSR_PAGE_ICON_LIST} ${TSR_PAGE_ICONS} ${CMAKE_CURRENT_SOURCE_DIR}/embed_files.cmake
     COMMENT "Embedding the page icons")
 target_sources(tsr_launcher_core PRIVATE ${TSR_PAGE_ICON_SOURCE})
+
+# The Xbox controller icon patches (prompts/xbox-prompts-<version>.dcpx) as byte arrays, prompts_patch.h.
+foreach(version 100 102)
+    string(SUBSTRING ${version} 0 1 major)
+    string(SUBSTRING ${version} 1 2 minor)
+    set(patch ${CMAKE_CURRENT_SOURCE_DIR}/prompts/xbox-prompts-${major}.${minor}.dcpx)
+    set(patch_source ${CMAKE_BINARY_DIR}/generated/xbox_prompts_${version}.cpp)
+    add_custom_command(OUTPUT ${patch_source}
+        COMMAND ${CMAKE_COMMAND} -DINPUT=${patch} -DOUTPUT=${patch_source} -DSYMBOL=kXboxPrompts${version}Patch
+                -P ${CMAKE_CURRENT_SOURCE_DIR}/embed.cmake
+        DEPENDS ${patch} ${CMAKE_CURRENT_SOURCE_DIR}/embed.cmake
+        COMMENT "Embedding prompts/xbox-prompts-${major}.${minor}.dcpx")
+    target_sources(tsr_launcher_core PRIVATE ${patch_source})
+endforeach()
 target_include_directories(tsr_launcher_core PRIVATE ${PROJECT_SOURCE_DIR}/gpu/shim)
 
 add_library(tsr_launcher STATIC host.cpp incident_page.cpp launcher.cpp package_browser.cpp problem_dialog.cpp shift_key.cpp
@@ -76,3 +91,10 @@ add_executable(tsr-launcher-tests EXCLUDE_FROM_ALL ../tests/launcher_tests.cpp)
 target_link_libraries(tsr-launcher-tests PRIVATE tsr_launcher_core)
 set_target_properties(tsr-launcher-tests PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
 target_compile_options(tsr-launcher-tests PRIVATE -Wall -Wextra)
+
+# The installed game's archives are only read: the patch is applied to a copy in the temporary folder.
+add_executable(tsr-game-feature-tests EXCLUDE_FROM_ALL ../tests/game_feature_tests.cpp)
+target_compile_definitions(tsr-game-feature-tests PRIVATE TSR_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+target_link_libraries(tsr-game-feature-tests PRIVATE tsr_launcher_core)
+set_target_properties(tsr-game-feature-tests PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
+target_compile_options(tsr-game-feature-tests PRIVATE -Wall -Wextra)

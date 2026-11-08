@@ -14,6 +14,7 @@
 #include <cctype>
 #include <chrono>
 #include <fstream>
+#include <iterator>
 #include <optional>
 #include <set>
 #include <thread>
@@ -635,6 +636,116 @@ bool ActivateInstalledBuild(const GameRoots& roots, const GameBuild& build, std:
     return prepared.state == GameFileState::kValid && prepared.build == &build && ActivatePrepared(target.app0);
 }
 
+namespace {
+
+constexpr char kRemovingSuffix[] = ".removing";
+
+bool IsLinkOrJunction(const fs::path& path) {
+    std::error_code ec;
+    if (fs::is_symlink(fs::symlink_status(path, ec))) {
+        return true;
+    }
+#ifdef _WIN32
+    const DWORD attributes = GetFileAttributesW(path.c_str());
+    return attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_REPARSE_POINT);
+#else
+    return false;
+#endif
+}
+
+// The build's own two folders, directly in the roots and named after the build; nothing else is ever removed.
+bool OwnedFolders(const GameRoots& roots, const GameBuild& build, const Layout& layout) {
+    const auto owned = [&](const fs::path& dir, const fs::path& root) {
+        return dir.parent_path() == Normal(root) && dir.filename() == PathFromUtf8(build.folder) &&
+               !IsLinkOrJunction(dir) && !IsLinkOrJunction(root);
+    };
+    return owned(layout.app0, roots.prepared) && owned(layout.image, roots.image);
+}
+
+bool RemoveAside(const fs::path& aside, std::string& detail) {
+    std::error_code ec;
+    if (!fs::exists(aside, ec)) {
+        return true;
+    }
+    fs::remove_all(aside, ec);
+    if (ec) {
+        detail += (detail.empty() ? "" : "; ") + Utf8(aside) + " left for later: " + ec.message();
+        return false;
+    }
+    return true;
+}
+
+} // namespace
+
+RemoveResult RemoveInstalledUpdate(const GameRoots& roots, const GameBuild& build, std::span<const GameBuild> builds) {
+    RemoveResult result;
+    const auto fail = [&](RemoveStatus status, std::string detail) {
+        result.status = status;
+        result.detail = std::move(detail);
+        return result;
+    };
+    const GameBuild* base = BaseBuildOf(build, builds);
+    if (!base) {
+        return fail(RemoveStatus::kNotUpdate, std::string(build.label) + " is not an update");
+    }
+    const Layout layout(BuildPaths(roots, build));
+    if (!OwnedFolders(roots, build, layout)) {
+        return fail(RemoveStatus::kForeignFolder, Utf8(layout.app0) + " is not the update's own folder");
+    }
+    std::error_code ec;
+    if (!fs::exists(layout.app0, ec) && !fs::exists(layout.image, ec)) {
+        return fail(RemoveStatus::kNotInstalled, std::string(build.label) + " is not installed");
+    }
+    std::ifstream sfo_file(layout.app0 / "sce_sys" / "param.sfo", std::ios::binary);
+    const std::string sfo((std::istreambuf_iterator<char>(sfo_file)), std::istreambuf_iterator<char>());
+    sfo_file.close();
+    if (fs::exists(layout.app0, ec) && CheckSfoIdentity(sfo, builds).build != &build) {
+        return fail(RemoveStatus::kForeignFolder, Utf8(layout.app0) + " does not hold " + build.label);
+    }
+    const bool was_active = LastPreparedBuild(roots, builds) == &build;
+
+    const fs::path app0_aside = WithSuffix(layout.app0, kRemovingSuffix);
+    const fs::path image_aside = WithSuffix(layout.image, kRemovingSuffix);
+    RemoveAside(app0_aside, result.detail);
+    RemoveAside(image_aside, result.detail);
+    if (fs::exists(app0_aside, ec) || fs::exists(image_aside, ec)) {
+        return fail(RemoveStatus::kInUse, "an earlier removal is still in use: " + result.detail);
+    }
+    const bool app0_moved = !fs::exists(layout.app0, ec) || RenameWithRetry(layout.app0, app0_aside);
+    if (!app0_moved) {
+        return fail(RemoveStatus::kInUse, Utf8(layout.app0) + " is in use");
+    }
+    if (fs::exists(layout.image, ec) && !RenameWithRetry(layout.image, image_aside)) {
+        if (fs::exists(app0_aside, ec)) {
+            RenameWithRetry(app0_aside, layout.app0);
+        }
+        return fail(RemoveStatus::kInUse, Utf8(layout.image) + " is in use");
+    }
+    RemoveAside(app0_aside, result.detail);
+    RemoveAside(image_aside, result.detail);
+    if (was_active || !LastPreparedBuild(roots, builds)) {
+        result.base_selected = ActivateInstalledBuild(roots, *base, builds);
+    }
+    return result;
+}
+
+bool FinishInterruptedRemovals(const GameRoots& roots, std::span<const GameBuild> builds) {
+    bool clean = true;
+    std::string detail;
+    for (const GameBuild& build : builds) {
+        if (!IsUpdateBuild(build)) {
+            continue;
+        }
+        const Layout layout(BuildPaths(roots, build));
+        if (!OwnedFolders(roots, build, layout)) {
+            continue;
+        }
+        clean = RemoveAside(WithSuffix(layout.app0, kRemovingSuffix), detail) && clean;
+        clean = RemoveAside(WithSuffix(layout.image, kRemovingSuffix), detail) && clean;
+    }
+    return clean;
+}
+
 bool RefusedPackageKind(InstallStatus status) {
     return status == InstallStatus::kExpectedBasePackage || status == InstallStatus::kExpectedUpdatePackage;
 }
@@ -846,10 +957,10 @@ InstallMessage DescribeInstall(InstallStatus status) {
         return {Tr("Already installed"), Tr("This version is already the one that starts.")};
     case InstallStatus::kExpectedBasePackage:
         return {Tr("This is an update package"),
-                Tr("Install game needs the base game. Use Install update for the 1.02 update package.")};
+                Tr("Install game needs the base game. Use Install update for the 1.01 or 1.02 update package.")};
     case InstallStatus::kExpectedUpdatePackage:
         return {Tr("This is the base game package"),
-                Tr("Install update needs the 1.02 update package. Use Install game for the base game.")};
+                Tr("Install update needs the 1.01 or 1.02 update package. Use Install game for the base game.")};
     case InstallStatus::kUnsupportedBuild:
         return {Tr("13 Sentinels: Aegis Rim version not supported yet"),
                 Tr("Diagnostic information was written to the latest log. Please share the latest log when reporting "

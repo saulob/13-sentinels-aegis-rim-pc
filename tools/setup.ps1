@@ -2,7 +2,7 @@
 .SYNOPSIS
   Checks the prerequisites for building the project and says what is missing.
 .PARAMETER InstallPython
-  Creates .venv and installs the one Python package tools\prepare-game.ps1 needs (cryptography). Optional: only
+  Creates .venv and installs the Python packages tools\prepare-game.ps1 (cryptography) and the prompt art test (numpy, Pillow, scipy) need. Optional: only
   for unpacking a PKG during development; the build and the launcher do not use Python.
   Nothing else is installed by this script.
 #>
@@ -21,9 +21,9 @@ if ($InstallPython) {
         & $python.Exe @($python.Args) -m venv (Join-Path $script:RepoRoot '.venv')
         if ($LASTEXITCODE -ne 0) { Stop-Tool 'Could not create .venv' }
     }
-    Write-Host '  installing cryptography into .venv'
-    & (Get-VenvPython) -m pip install --quiet --disable-pip-version-check cryptography
-    if ($LASTEXITCODE -ne 0) { Stop-Tool 'pip install cryptography failed' }
+    Write-Host '  installing cryptography, numpy, Pillow and scipy into .venv'
+    & (Get-VenvPython) -m pip install --quiet --disable-pip-version-check cryptography numpy pillow scipy
+    if ($LASTEXITCODE -ne 0) { Stop-Tool 'pip install failed' }
 }
 $python = Get-Python
 if (-not $python) {

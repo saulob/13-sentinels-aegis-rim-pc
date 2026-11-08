@@ -31,6 +31,8 @@
 #include "tsr_displays.h"
 #include "tsr_graphics.h"
 #include "tsr_resolution.h"
+#include "controller_prompts.h"
+#include "language_support.h"
 #include "game_files.h"
 #include "game_install.h"
 #include "game_process.h"
@@ -67,7 +69,7 @@ const ImVec4 kAccent = ImVec4(kAccentRed / 255.0f, kAccentGreen / 255.0f, kAccen
 constexpr double kPlayFeedbackSeconds = 0.4;
 constexpr char kPortTitle[] = "13 Sentinels: Aegis Rim PC Port";
 constexpr char kInstallTitle[] = "Select your 13 Sentinels: Aegis Rim base game package";
-constexpr char kInstallUpdateTitle[] = "Select your 13 Sentinels: Aegis Rim 1.02 update package";
+constexpr char kInstallUpdateTitle[] = "Select your 13 Sentinels: Aegis Rim 1.01 or 1.02 update package";
 const std::string kPortUrl = std::string("https://") + kPortRepository;
 
 ImGuiKey ImGuiKeyOf(int scancode) {
@@ -123,13 +125,28 @@ constexpr char kAntiAliasingHelp[] =
     "SMAA smooths jagged edges on the finished picture, at a small cost in performance.";
 constexpr char kAnisotropyHelp[] =
     "Sharper textures on floors and walls seen at an angle. Game uses the game's own filtering.";
-constexpr char kTextLanguageHelp[] = "Language used by game menus and subtitles.";
+constexpr char kTextLanguageHelp[] = "Language of the game's menus and subtitles, independent of Voice Language.";
 constexpr char kShowFpsTitleHelp[] = "Shows the frame rate in the window title: 13 Sentinels: Aegis Rim | FPS: 60.00";
 constexpr char kShowResolutionTitleHelp[] =
     "Shows the game's render resolution in the window title: 13 Sentinels: Aegis Rim | 1920x1080";
 constexpr char kFrameCounterHelp[] = "Shows the frame rate and frame time in a corner of the game.";
+constexpr char kVoicesJapaneseOnlyHelp[] = "Only Japanese voices are available in version 1.00";
+constexpr char kVoicesGameSettingsHelp[] =
+    "English and Japanese voices are available. Change Audio Language in the game's settings";
+constexpr char kVoicesMissingHelp[] =
+    "The English or Japanese voice files were not found in this version. Installing its update again restores them.";
+constexpr char kTextFallbackHelp[] = "%s is not installed for this version; %s is shown. Your choice is kept.";
+constexpr char kSkipIntroHelp[] =
+    "Skips the startup logos, the way pressing a button does, and goes straight to the title screen. Story scenes are not "
+    "affected.";
+constexpr char kControllerIconsHelp[] =
+    "The buttons the game's prompts show. Xbox repaints the face buttons (A, B, X, Y) and the Menu and View labels in the "
+    "installed game archives (reversible; a few seconds, longer the first time if game versions share their files).";
 constexpr char kUpdateHelp[] =
-    "The optional 1.02 update. It is laid over the installed base game, which stays as it was, so 1.00 can still be played.";
+    "The optional 1.01 or 1.02 update, each laid over the installed base game on its own. The base stays as it was, so 1.00 "
+    "can still be played.";
+constexpr char kRemoveUpdateHelp[] =
+    "Deletes this update's own files. 1.00, the other update, saves, trophies and settings are kept.";
 constexpr char kGameVersionHelp[] = "Which installed version starts.";
 constexpr char kAllowOverlayProgramsHelp[] =
     "For programs that draw over games (recording, chat, store and performance overlays). On, PLAY starts the game as a "
@@ -283,7 +300,7 @@ class LauncherApp {
 public:
     LauncherApp(const TsrLauncherConfig& config, LauncherSettings& settings, GamePaths paths, GameCheck check)
         : config_(config), settings_(settings), paths_(std::move(paths)), files_(check.state), build_(check.build),
-          text_languages_(InstalledTextLanguages(paths_.app0, build_)), installed_builds_(PreparedBuilds(RootsOf(paths_))) {}
+          languages_(LanguagesOf(paths_.app0, build_)), installed_builds_(PreparedBuilds(RootsOf(paths_))) {}
 
     bool game_process_started() const { return game_process_started_; }
 
@@ -304,6 +321,11 @@ public:
         }
         displays_ = ListDisplays();
         gpu_names_ = TsrGraphics::GpuChoices(ListGpuNames());
+        if (!FinishInterruptedRemovals(RootsOf(paths_))) {
+            Log("an interrupted update removal could not be finished yet");
+        }
+        RefreshPrompts();
+        ApplySavedPrompts();
         placement_ = PlacementTracker(host_.Restored());
         fonts_ = trg::LoadSystemFonts(trg::layout::kTextBody);
         if (LoadLauncherImage("header-art.png", header_art_image_)) {
@@ -364,9 +386,9 @@ private:
     Outcome Frame() {
         TrackPlacement();
         PollInstall();
+        PollPrompts();
         NormalizeGraphicsCard();
         NormalizeGraphicsSettings();
-        NormalizeTextLanguage(settings_, text_languages_);
         if (play_.starting() && ImGui::GetTime() - play_started_ >= kPlayFeedbackSeconds) {
             if (!SeparateGameProcess(config_, settings_)) {
                 return Outcome::kPlay;
@@ -425,7 +447,8 @@ private:
         if (files_ == GameFileState::kValid && !GraphicsUsable()) {
             return;
         }
-        switch (play_.Request(install_.running(), files_ == GameFileState::kValid, [this] { return launcher_->Save(); })) {
+        const bool busy = install_.running() || prompts_.running();
+        switch (play_.Request(busy, files_ == GameFileState::kValid, [this] { return launcher_->Save(); })) {
         case PlayRequest::kStarting:
             play_started_ = ImGui::GetTime();
             launcher_->SetStatus("", 0.0);
@@ -435,7 +458,9 @@ private:
             launcher_->SetStatus(std::string(StatusTitle(files_)) + Tr(". Install the game files first."), 6.0);
             break;
         case PlayRequest::kBusy:
-            launcher_->SetStatus("Wait for the installation to finish.", 6.0);
+            launcher_->SetStatus(prompts_.running() ? "Wait for the game file changes to finish."
+                                                    : "Wait for the installation to finish.",
+                                 6.0);
             break;
         case PlayRequest::kSaveFailed:
             Log("could not save the settings");
@@ -460,8 +485,7 @@ private:
         const GameCheck check = CheckAndLog(paths_);
         files_ = check.state;
         build_ = check.build;
-        text_languages_ = InstalledTextLanguages(paths_.app0, build_);
-        NormalizeTextLanguage(settings_, text_languages_);
+        languages_ = LanguagesOf(paths_.app0, build_);
         installed_builds_ = PreparedBuilds(RootsOf(paths_));
     }
 
@@ -541,6 +565,9 @@ private:
             if (install_.running()) {
                 return trg::PlayCheck{false, "Wait for the installation to finish.", 0};
             }
+            if (prompts_.running()) {
+                return trg::PlayCheck{false, "Wait for the game file changes to finish.", 0};
+            }
             if (files_ != GameFileState::kValid) {
                 return trg::PlayCheck{false, "The game files are not ready: see the Play page.", 0};
             }
@@ -588,9 +615,9 @@ private:
             return {name, "Resolution, anti-aliasing and texture filtering.", [this](trg::Ui& ui) { PageGraphics(ui); },
                     nullptr, nullptr};
         case PageId::kGameplay:
-            return {name, "Language and frame rate readouts.", [this](trg::Ui& ui) { PageGameplay(ui); }, nullptr, nullptr};
+            return {name, "Language, voices, intro and frame rate readouts.", [this](trg::Ui& ui) { PageGameplay(ui); }, nullptr, nullptr};
         case PageId::kControls:
-            return {name, "Controller and keyboard.", [this](trg::Ui& ui) { PageControls(ui); }, nullptr, nullptr};
+            return {name, "Controller icons and keyboard.", [this](trg::Ui& ui) { PageControls(ui); }, nullptr, nullptr};
         case PageId::kTrophies:
             return {name, "Your trophies on this PC.", [this](trg::Ui& ui) { PageTrophies(ui); }, nullptr, nullptr};
         case PageId::kBugReport:
@@ -609,7 +636,7 @@ private:
                                                   : StatusTitle(files_);
         const std::string detail = ready && build_ ? BuildMetadataText(*build_) : StatusDetail(files_);
         ui.StatusCard(ready ? trg::Status::kReady : trg::Status::kAttention, title.c_str(), detail.c_str());
-        if (ready && build_) {
+        if (ready && build_ && build_->support_note[0]) {
             ui.Spacer(4);
             ImGui::PushStyleColor(ImGuiCol_Text, ui.theme().warn_dot);
             ImGui::TextWrapped("%s", Tr(build_->support_note));
@@ -645,15 +672,56 @@ private:
                 ui.Row("Game version", kGameVersionHelp);
                 GameVersionCombo();
             }
+            RemoveUpdateRows(ui);
             ui.EndRows();
         }
         ui.Toggle("Show this launcher", kShowLauncherHelp, kShowLauncherKey, true, "Off", "On");
         ui.EndRows();
     }
 
+    void RemoveUpdateRows(trg::Ui& ui) {
+        const std::vector<const GameBuild*> builds = installed_builds_;
+        for (const GameBuild* build : builds) {
+            if (!IsUpdateBuild(*build)) {
+                continue;
+            }
+            const std::string label = std::string(Tr("Remove update ")) + build->version;
+            const std::string question =
+                std::string(Tr("Remove the ")) + build->label + Tr(" update? 1.00 and your saves are kept.");
+            ImGui::BeginDisabled(install_.running() || prompts_.running() || BuildPinned());
+            const bool confirmed = ui.ConfirmRow(label.c_str(), kRemoveUpdateHelp, "Remove update...", question.c_str(), "Remove");
+            ImGui::EndDisabled();
+            if (confirmed) {
+                RemoveUpdate(*build);
+            }
+        }
+    }
+
+    void RemoveUpdate(const GameBuild& build) {
+        const RemoveResult result = RemoveInstalledUpdate(RootsOf(paths_), build);
+        Log("remove update %s: %s%s%s", build.label, result.ok() ? "removed" : "refused",
+            result.detail.empty() ? "" : ": ", result.detail.c_str());
+        paths_ = ActiveBuildPaths(RootsOf(paths_));
+        Recheck();
+        if (trophy_page_) {
+            trophy_page_->Invalidate();
+        }
+        RefreshPrompts();
+        if (!result.ok()) {
+            launcher_->SetStatus(result.status == RemoveStatus::kInUse
+                                     ? "The update is in use and was not removed. Close the game and try again."
+                                     : "The update could not be removed. See the log.",
+                                 8.0);
+            return;
+        }
+        launcher_->SetStatus(std::string(build.label) + Tr(" removed.") +
+                                 (result.base_selected ? Tr(" USA 1.00 is now the game version.") : ""),
+                             6.0);
+    }
+
     // Each version has its own folder, so changing it copies nothing.
     void GameVersionCombo() {
-        ImGui::BeginDisabled(install_.running() || BuildPinned());
+        ImGui::BeginDisabled(install_.running() || prompts_.running() || BuildPinned());
         if (ImGui::BeginCombo("##game_version", build_ ? build_->label : "")) {
             for (const GameBuild* build : installed_builds_) {
                 if (ImGui::Selectable(build->label, build == build_) && build != build_) {
@@ -677,6 +745,8 @@ private:
         if (trophy_page_) {
             trophy_page_->Invalidate();
         }
+        RefreshPrompts();
+        ApplySavedPrompts();
     }
 
     // The desktop's chooser (Windows' own, zenity or kdialog) unless there is none or TSR_FILE_CHOOSER=builtin.
@@ -693,7 +763,7 @@ private:
     }
 
     void BrowseAndInstall(PackageKind kind) {
-        if (install_.running() || browser_.active() || BuildPinned()) {
+        if (install_.running() || prompts_.running() || browser_.active() || BuildPinned()) {
             return;
         }
         if (UseBuiltInChooser()) {
@@ -771,6 +841,8 @@ private:
                 trophy_page_->Invalidate();
             }
             launcher_->SetStatus(std::string(message.title) + ". " + message.text, 6.0);
+            RefreshPrompts();
+            ApplySavedPrompts();
             return;
         }
         if (outcome->status == InstallStatus::kCancelled) {
@@ -900,11 +972,9 @@ private:
     }
 
     void PageGameplay(trg::Ui& ui) {
-        std::vector<trg::Option> languages;
-        for (const TextLanguage& language : text_languages_) {
-            languages.push_back({std::string(language.key), std::string(language.name)});
-        }
-        ui.Combo("Menu & Subtitles", kTextLanguageHelp, kTextLanguageKey, text_languages_.front().key.data(), languages);
+        TextLanguageRow(ui);
+        VoiceLanguageRow(ui);
+        ui.Toggle("Skip Intro", kSkipIntroHelp, kSkipIntroKey, false, "Off", "On");
         ui.Toggle("Frame rate in title", kShowFpsTitleHelp, kShowFpsTitleKey, false, "Off", "On");
         ui.Toggle("Render resolution in title", kShowResolutionTitleHelp, kShowResolutionTitleKey, false, "Off", "On");
         ui.Toggle("Frame counter", kFrameCounterHelp, kShowFrameCounterKey, false, "Hidden", "Shown");
@@ -912,6 +982,65 @@ private:
             ui.Toggle("Allow overlay programs", kAllowOverlayProgramsHelp, kAllowOverlayProgramsKey, false, "Off", "On");
         }
         ui.EndRows();
+    }
+
+    // A combo over the effective value: picking an entry stores it; the stored preference is never rewritten otherwise.
+    void LanguageCombo(const char* id, const char* key, const std::vector<trg::Option>& options, std::string_view effective) {
+        const auto shown = std::find_if(options.begin(), options.end(), [&](const trg::Option& o) { return o.value == effective; });
+        ImGui::PushID(id);
+        ImGui::SetNextItemWidth(-FLT_MIN);
+        if (ImGui::BeginCombo("##language", shown == options.end() ? "" : Tr(shown->label.c_str()), ImGuiComboFlags_HeightLarge)) {
+            for (const trg::Option& option : options) {
+                const bool selected = option.value == effective;
+                if (ImGui::Selectable(Tr(option.label.c_str()), selected)) {
+                    settings_.Set(key, option.value);
+                }
+                if (selected) {
+                    ImGui::SetItemDefaultFocus();
+                }
+            }
+            ImGui::EndCombo();
+        }
+        ImGui::PopID();
+    }
+
+    void TextLanguageRow(trg::Ui& ui) {
+        std::vector<trg::Option> options;
+        for (const TextLanguage& language : languages_.text) {
+            options.push_back({std::string(language.key), std::string(language.name)});
+        }
+        const std::string preference = settings_.Get(kTextLanguageKey);
+        const TextLanguage& effective = EffectiveTextLanguage(languages_, preference);
+        ui.Row("Text Language", kTextLanguageHelp);
+        LanguageCombo("text_language", kTextLanguageKey, options, effective.key);
+        if (!preference.empty() && preference != effective.key) {
+            char text[256];
+            std::snprintf(text, sizeof(text), Tr(kTextFallbackHelp), LanguageName(preference).c_str(),
+                          std::string(effective.name).c_str());
+            ui.Help(text);
+        }
+    }
+
+    void VoiceLanguageRow(trg::Ui& ui) {
+        if (!build_) {
+            return;
+        }
+        if (languages_.english_voices) {
+            ui.Info("Voice Language", "Game settings");
+            ui.Help(kVoicesGameSettingsHelp);
+        } else {
+            ui.Info("Voice Language", "Japanese");
+            ui.Help(build_->english_voices ? kVoicesMissingHelp : kVoicesJapaneseOnlyHelp);
+        }
+    }
+
+    static std::string LanguageName(std::string_view key) {
+        for (const TextLanguage& language : TextLanguagesOf(nullptr)) {
+            if (language.key == key) {
+                return std::string(language.name);
+            }
+        }
+        return std::string(key);
     }
 
     std::string ControllersText() const {
@@ -928,6 +1057,11 @@ private:
 
     void PageControls(trg::Ui& ui) {
         ui.Info("Controller", ControllersText().c_str());
+        ui.Row("Controller icons", kControllerIconsHelp);
+        ControllerIconsCombo(ui);
+        if (files_ == GameFileState::kValid && build_ && !xbox_available_) {
+            ui.Help("Xbox icons are not available: the installed archives are not the ones the icons were made for.");
+        }
         ui.Info("Keyboard", "Always on, together with the controller.");
         if (ui.ConfirmRow("Keyboard defaults", "Puts the keyboard controls and the port hotkeys back to their defaults.",
                           "Reset to defaults", "Put every key back to its default?", "Reset")) {
@@ -958,6 +1092,126 @@ private:
         } else {
             ui.SetStatus("That key cannot be used.");
         }
+    }
+
+    // The installed archives are the truth here; the setting only remembers the choice for the next install.
+    void ControllerIconsCombo(trg::Ui& ui) {
+        if (ui.TaskProgress(prompts_)) {
+            return;
+        }
+        const bool ready = files_ == GameFileState::kValid && build_ && !install_.running();
+        ImGui::BeginDisabled(!ready || (!xbox_available_ && prompts_installed_ == PromptStyle::kPlayStation));
+        const char* shown = ready ? PromptStyleLabel(prompts_installed_) : "Install the game first";
+        if (ImGui::BeginCombo("##controller_icons", Tr(shown))) {
+            for (const PromptStyle style : {PromptStyle::kPlayStation, PromptStyle::kXbox}) {
+                const bool selected = style == prompts_installed_;
+                if (ImGui::Selectable(Tr(PromptStyleLabel(style)), selected) && !selected) {
+                    StartPrompts(style, false);
+                }
+                if (selected) {
+                    ImGui::SetItemDefaultFocus();
+                }
+            }
+            ImGui::EndCombo();
+        }
+        ImGui::EndDisabled();
+    }
+
+    void RefreshPrompts() {
+        if (files_ != GameFileState::kValid || !build_) {
+            prompts_installed_ = PromptStyle::kPlayStation;
+            prompts_state_ = PromptState::kPlayStation;
+            xbox_available_ = false;
+            return;
+        }
+        prompts_state_ = InstalledPromptState(paths_.app0, *build_, XboxPromptsPatch(*build_));
+        prompts_installed_ = prompts_state_ == PromptState::kXbox ? PromptStyle::kXbox : PromptStyle::kPlayStation;
+        std::string why;
+        const std::optional<BlockPatch> patch = ParseBlockPatch(XboxPromptsPatch(*build_));
+        xbox_available_ = patch && PromptPatchFits(paths_.app0, *build_, *patch, &why);
+        Log("controller icons: %s installed%s%s%s", PromptStyleKey(prompts_installed_),
+            prompts_state_ == PromptState::kOther ? " (another patch)" : "", xbox_available_ ? "" : ", Xbox unavailable: ",
+            xbox_available_ ? "" : why.c_str());
+    }
+
+    // After an install or a version change: the archives follow the saved choice again.
+    void ApplySavedPrompts() {
+        if (files_ != GameFileState::kValid || !build_) {
+            return;
+        }
+        const PromptStyle saved =
+            ParsePromptStyle(settings_.Get(kControllerIconsKey, kPromptsPlayStation)).value_or(PromptStyle::kPlayStation);
+        const PromptStyle wanted = xbox_available_ ? saved : PromptStyle::kPlayStation;
+        const PromptState target = wanted == PromptStyle::kXbox ? PromptState::kXbox : PromptState::kPlayStation;
+        if (target != prompts_state_) {
+            Log("controller icons: applying the saved choice (%s)", PromptStyleKey(wanted));
+            StartPrompts(wanted, true);
+        }
+    }
+
+    // The folders of the other installed builds, which may share archives with this one by hard links.
+    std::vector<std::filesystem::path> OtherBuildFolders() const {
+        std::vector<std::filesystem::path> folders;
+        const GameRoots roots = RootsOf(paths_);
+        for (const GameBuild* other : installed_builds_) {
+            if (other != build_) {
+                folders.push_back(BuildPaths(roots, *other).app0);
+            }
+        }
+        return folders;
+    }
+
+    void StartPrompts(PromptStyle style, bool restoring) {
+        if (prompts_.running() || install_.running() || !build_) {
+            return;
+        }
+        prompts_restoring_ = restoring;
+        prompts_outcome_ = std::make_shared<PromptsResult>();
+        const char* title = style == PromptStyle::kXbox ? "Switching to Xbox icons..." : "Restoring PlayStation icons...";
+        const bool started = prompts_.Start(
+            title, [outcome = prompts_outcome_, style, app0 = paths_.app0, build = *build_,
+                    linked = OtherBuildFolders()](trg::Task& task) {
+                PatchHooks hooks;
+                hooks.phase = [&task](const char* text) {
+                    task.SetLabel(text);
+                    task.Progress(0, 0);
+                };
+                hooks.progress = [&task](uint64_t done, uint64_t total) {
+                    task.Progress(static_cast<long long>(done), static_cast<long long>(total));
+                    return !task.cancelled();
+                };
+                *outcome = SetPromptStyle(app0, build, style, XboxPromptsPatch(build), hooks, linked);
+                if (outcome->ok) {
+                    return std::string();
+                }
+                return std::string(outcome->cancelled ? "Cancelled" : "Could not change the game files");
+            });
+        if (started) {
+            Log("controller icons: switching to %s", PromptStyleKey(style));
+        }
+    }
+
+    // Runs every frame so a finished change is picked up whichever page is open.
+    void PollPrompts() {
+        if (prompts_.Finish() == trg::Task::State::kIdle) {
+            return;
+        }
+        const std::shared_ptr<PromptsResult> outcome = std::move(prompts_outcome_);
+        if (!outcome) {
+            return;
+        }
+        RefreshPrompts();
+        if (outcome->ok) {
+            Log("controller icons: %s (%s)", PromptStyleKey(prompts_installed_), outcome->detail.c_str());
+            if (!prompts_restoring_ && !settings_.SaveNow({{kControllerIconsKey, PromptStyleKey(prompts_installed_)}})) {
+                Log("could not save the controller icons setting");
+            }
+            launcher_->SetStatus(std::string(Tr("Controller icons: ")) + Tr(PromptStyleLabel(prompts_installed_)) + ".", 6.0);
+            return;
+        }
+        Log("controller icons: %s: %s", outcome->cancelled ? "cancelled" : "failed", outcome->detail.c_str());
+        launcher_->SetStatus(outcome->cancelled ? "Game files unchanged." : "Could not change the game files. See the log.",
+                             8.0);
     }
 
     std::filesystem::path UserDir() const { return PathFromUtf8(config_.user_dir ? config_.user_dir : "user"); }
@@ -1057,7 +1311,7 @@ private:
     GamePaths paths_;
     GameFileState files_;
     const GameBuild* build_ = nullptr;
-    std::vector<TextLanguage> text_languages_;
+    LanguageSupport languages_;
     LauncherHost host_;
     TsrPng::Image header_art_image_;
     ImTextureID header_art_{};
@@ -1079,6 +1333,12 @@ private:
     double play_started_ = 0.0;
     std::shared_ptr<InstallResult> outcome_;
     trg::Task install_;
+    std::shared_ptr<PromptsResult> prompts_outcome_;
+    trg::Task prompts_;
+    PromptStyle prompts_installed_ = PromptStyle::kPlayStation;
+    PromptState prompts_state_ = PromptState::kPlayStation;
+    bool xbox_available_ = false;
+    bool prompts_restoring_ = false;
     PackageBrowser browser_;
     PackageKind browsing_for_ = PackageKind::kBase;
     std::vector<const GameBuild*> installed_builds_;

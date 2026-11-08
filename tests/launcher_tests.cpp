@@ -10,6 +10,7 @@
 #include <string>
 
 #include "game_profile.h"
+#include "language_support.h"
 #include "options.h"
 #include "settings.h"
 #include "tsr_keys.h"
@@ -152,13 +153,12 @@ void TestTextLanguages(const fs::path& scratch) {
     LauncherSettings settings(scratch / "language.ini");
     settings.Set(kTextLanguageKey, "klingon");
     CHECK(settings.Get(kTextLanguageKey, languages.front().key) == languages.front().key);
-    CHECK(!NormalizeTextLanguage(settings, languages));
-    // A language another build offers but this one does not becomes this build's first.
+    // A language this install lacks falls back for the game, and the stored choice stays.
     settings.Set(kTextLanguageKey, std::string(languages.front().key));
-    const auto offered = languages.subspan(1);
-    CHECK(NormalizeTextLanguage(settings, offered));
-    CHECK(settings.Get(kTextLanguageKey) == offered.front().key);
-    CHECK(!NormalizeTextLanguage(settings, offered));
+    LanguageSupport support;
+    support.text.assign(languages.begin() + 1, languages.end());
+    CHECK(EffectiveTextLanguage(support, settings.Get(kTextLanguageKey)).key == support.text.front().key);
+    CHECK(settings.Get(kTextLanguageKey) == languages.front().key);
 }
 
 void TestWindowSizes() {

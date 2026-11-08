@@ -21,7 +21,13 @@ PROFILES = {
                 'eboot_sha256': 'cf7e90939842b3c9c02f9116e26c2e398610312217fea05d52a1595c60ed5950',
                 'folder': 'CUSA19610-1.00', 'regional_archive': 'ROBO_US.CPK', 'extra_files': LANGUAGE_ARCHIVES,
             },
-            # Cumulative: the update is laid over the base package and its eboot also opens the ROBO_PATCH archives.
+            # Each update is laid over the base package alone; its eboot also opens the ROBO_PATCH archives it ships.
+            '1.01': {
+                'layers': (BASE_LAYER, {'app_ver': '01.01', 'sfo_version': '01.00', 'update': True}),
+                'eboot_sha256': 'dafcc5f005da0eb74f7289c6dad4e8b8079a400e4832b3bc0a47b1c26a050533',
+                'folder': 'CUSA19610-1.01', 'regional_archive': 'ROBO_US.CPK',
+                'extra_files': LANGUAGE_ARCHIVES + ('ROBO_PATCH_US.CPK', 'sce_discmap_patch.plt'),
+            },
             '1.02': {
                 'layers': (BASE_LAYER, {'app_ver': '01.02', 'sfo_version': '01.00', 'update': True}),
                 'eboot_sha256': '075250099ba56c2e8f35b4dc8d35b25c5f98304e45c8546c790d56fe87803ff1',

@@ -14,7 +14,7 @@
   test works on a copy in the build folder. TSR_TEST_PACKAGES names a folder with the real USA packages, which are only
   opened; TSR_TEST_INSTALL adds a full install into that folder.
 .PARAMETER Group
-  Runtime, SaveData, Packages, Launcher, Audio, Video, Imports, or All (the default). Several can be given.
+  Runtime, SaveData, Packages, Launcher, Features, Audio, Video, Imports, or All (the default). Several can be given.
 .PARAMETER TimeoutSeconds
   Fails a test that runs longer than this.
 .EXAMPLE
@@ -31,7 +31,7 @@ param(
 . (Join-Path $PSScriptRoot '_common.ps1')
 $root = $script:RepoRoot
 $buildDir = Join-Path $root 'build\cmake\clang64'
-$groupOrder = @('Runtime', 'SaveData', 'Packages', 'Launcher', 'Audio', 'Video', 'Imports')
+$groupOrder = @('Runtime', 'SaveData', 'Packages', 'Launcher', 'Features', 'Audio', 'Video', 'Imports')
 # powershell -File passes "-Group A,B" as one string.
 $Group = @($Group | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim() } | Where-Object { $_ })
 foreach ($name in $Group) {
@@ -54,6 +54,12 @@ function Invoke-Native([scriptblock]$Command) {
 
 function Invoke-Imports([string]$Version, [bool]$Required) {
     $game = Join-Path $root "game\prepared\CUSA19610-$Version"
+    $source = "game\prepared\CUSA19610-$Version"
+    $view = Join-Path $root "game\work\view-$Version"
+    if (-not (Test-Path -LiteralPath (Join-Path $game 'eboot.bin')) -and (Test-Path -LiteralPath (Join-Path $view 'eboot.bin'))) {
+        $game = $view
+        $source = "game\work\view-$Version"
+    }
     if (-not (Test-Path -LiteralPath (Join-Path $game 'eboot.bin'))) {
         $why = "USA $Version is not installed (game\prepared\CUSA19610-$Version)"
         if ($Required) { return Result 'SKIPPED' $why }
@@ -74,7 +80,7 @@ function Invoke-Imports([string]$Version, [bool]$Required) {
         return Result 'FAIL' "$($ebootSummary.Unbound) eboot imports have no binding: $(($eboot.Lines | Select-Object -Skip 1) -join ' | ')"
     }
     $libraries = @($all.Lines | Where-Object { $_ -match '^\s+(lib\w+): (\d+)$' } | ForEach-Object { $_.Trim() })
-    return Result 'PASS' '' @("eboot: $($ebootSummary.Text)",
+    return Result 'PASS' '' @("$($source): eboot: $($ebootSummary.Text)",
                               "with bundled modules: $($allSummary.Unbound) unbound ($($libraries -join ', '))")
 }
 function Get-ImportSummary($Run) {
@@ -84,24 +90,47 @@ function Get-ImportSummary($Run) {
     [pscustomobject]@{ Unbound = [int]$Matches[1]; Text = $line.Substring($line.IndexOf(': ') + 2) }
 }
 
+function Invoke-PromptArt {
+    $folder = Join-Path $root 'build\test-prompt-art'
+    if (-not (Test-Path -LiteralPath (Join-Path $folder '100'))) {
+        return Result 'SKIPPED' 'no exported entries: run this group with TSR_TEST_PACKAGES set'
+    }
+    $python = Get-Python
+    if (-not $python) { return Result 'SKIPPED' 'Python 3 not found (tools\setup.ps1)' }
+    $modules = Invoke-Native { & $python.Exe @($python.Args) '-I' '-c' 'import numpy, PIL, scipy' }
+    if ($modules.Code -ne 0) { return Result 'SKIPPED' 'numpy, Pillow and scipy are not installed (tools\setup.ps1 -InstallPython)' }
+    $run = Invoke-Native { & $python.Exe @($python.Args) '-I' (Join-Path $root 'tests\prompt_art_tests.py') $folder }
+    $notes = @($run.Lines | Where-Object { $_ -match '^prompt art' })
+    if ($run.Code -eq 2) { return Result 'SKIPPED' (($run.Lines | Select-Object -Last 1) -join ' ') }
+    if ($run.Code -ne 0) {
+        $run.Lines | ForEach-Object { Write-Host "    $_" }
+        return Result 'FAIL' (@($run.Lines | Where-Object { $_ -match '^FAIL|Error' } | Select-Object -First 3) -join '; ') $notes
+    }
+    return Result 'PASS' '' $notes
+}
+
 $steps = @(
     (Step 'Runtime' 'threads, join/detach, handles, mutexes, condition variables, wait states' 'tsr-runtime-tests'),
     (Step 'Runtime' 'guest memory (sparse backing, commitment, aliases, release)' 'tsr-memory-windows-tests'),
     (Step 'Runtime' 'log rotation and closed standard streams' 'tsr-log-tests'),
     (Step 'Runtime' 'crash report module history' 'tsr-module-history-tests'),
     (Step 'SaveData' 'mounts, files, handles, errors, interrupted writes, metadata, user save copy' 'tsr-savedata-tests'),
-    (Step 'Packages' 'identities 1.00/1.02, base and update, staging, local install, boot image signatures' 'tsr-game-profile-tests'),
+    (Step 'Packages' 'identities 1.00/1.01/1.02, real packages, installs, switching, update removal, isolation, voice banks, boot images, prompt art export' 'tsr-game-profile-tests'),
+    (Step 'Packages' 'Xbox prompt art coverage (Python, on the entries the step above exported)' -Block { Invoke-PromptArt }),
     (Step 'Launcher' 'tsr.ini persistence, validation, launcher gate, keys, languages, window sizes' 'tsr-launcher-tests'),
     (Step 'Launcher' 'windowed-mode size and centring' 'tsr-window-tests'),
     (Step 'Launcher' 'SDL gamepad defaults' 'tsr-sdl-compat-tests'),
+    (Step 'Features' 'Skip Intro hook sites, refusals, hook run on synthetic code' 'tsr-game-hook-tests'),
+    (Step 'Features' 'Xbox patches, real archive switching, refusals, rollback, shared links, languages, build status, settings' 'tsr-game-feature-tests'),
     (Step 'Audio' 'Ajm contexts, instances, batch slots, pending batches, errors' 'tsr-ajm-tests'),
     (Step 'Video' 'presentation pacing' 'tsr-frame-pacing-tests'),
     (Step 'Video' 'H.264 decoder (Videodec2)' -Block { Result 'SKIPPED' 'lives in the video core library; no headless test target yet' }),
     (Step 'Imports' 'USA 1.00 import coverage' -Block { Invoke-Imports '1.00' $true }),
+    (Step 'Imports' 'USA 1.01 import coverage' -Block { Invoke-Imports '1.01' $false }),
     (Step 'Imports' 'USA 1.02 import coverage' -Block { Invoke-Imports '1.02' $false })
 )
 
-$wanted = if ($Group -contains 'All') { $groupOrder } else { $groupOrder | Where-Object { $Group -contains $_ } }
+$wanted = @(if ($Group -contains 'All') { $groupOrder } else { $groupOrder | Where-Object { $Group -contains $_ } })
 $steps = @($steps | Where-Object { $wanted -contains $_.Group })
 $targets = @($steps | Where-Object { $_.Target } | ForEach-Object { $_.Target } | Select-Object -Unique)
 
@@ -129,7 +158,7 @@ function Invoke-TestExe([string]$Target, [hashtable]$Built) {
     $exe = Join-Path $buildDir "bin\$Target.exe"
     if (-not (Test-Path -LiteralPath $exe)) { return Result 'FAIL' "$exe is missing after the build" }
     $run = Invoke-Captured $exe
-    $notes = @($run.Lines | Where-Object { $_ -match '^(skipped|not covered):' -or $_ -match '^(user save copy|local install)' })
+    $notes = @($run.Lines | Where-Object { $_ -match '^(skipped|not covered|note):' -or $_ -match '^(user save copy|local install|real archive|real boot images|real install|removal|packages:|package |prompt art|voice table|CUSA19610 1\.0[12] USA boot image)' })
     if ($run.TimedOut) { return Result 'FAIL' "timed out after $TimeoutSeconds s" $notes }
     if ($run.Code -ne 0) {
         $run.Lines | ForEach-Object { Write-Host "    $_" }

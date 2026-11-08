@@ -45,7 +45,9 @@ struct GameBuild {
     std::span<const PackageLayer> layers; // base package first; the last layer is the finished game
     std::span<const TsrResolutionSite> resolution_sites; // empty: runs only at its native size
     std::span<const TextLanguage> text_languages;        // the first is the default
-    const char* support_note;     // what is known about running this build, shown on the Play page
+    const char* support_note;     // shown on the Play page; empty once the build has been confirmed to run
+    std::span<const char* const> prompt_archives; // the archives the Xbox icons patch covers (controller_prompts.h)
+    bool english_voices;           // ships the English voice bank and the game's Audio Language option
 };
 
 // The supported builds: the base first, then its updates.

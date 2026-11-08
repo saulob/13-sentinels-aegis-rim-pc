@@ -14,6 +14,7 @@ code runs directly on the PC through replacement PS4 system libraries and a Vulk
 | Build | Package | Role | eboot.bin SHA-256 |
 |---|---|---|---|
 | CUSA19610 1.00 USA | `gd`, APP_VER 01.00, VERSION 01.00 | Base game, required, plays on its own | `cf7e9093…5950` |
+| CUSA19610 1.01 USA | `gp`, APP_VER 01.01, VERSION 01.00 | Optional update, laid over the installed 1.00 | `dafcc5f0…0533` |
 | CUSA19610 1.02 USA | `gp`, APP_VER 01.02, VERSION 01.00 | Optional update, laid over the installed 1.00 | `07525009…3ff1` |
 
 Packages are identified by their `param.sfo` (TITLE_ID, CONTENT_ID `UP0177-CUSA19610_00-13SENTINELSEFIGS`, CATEGORY,
@@ -25,9 +26,12 @@ CUSA18093 Asia) are recognized and refused with a diagnostic block in the log.
 1. Open `13_sentinels_launcher.exe` (or `13_sentinels_aegis_rim.exe`).
 2. **Play → Install game...** and select the USA 1.00 package. It is unpacked into `game\` next to the program
    (about 4.5 GB).
-3. Optional: **Play → Install update...** and select the 1.02 update package. The update gets a folder of its own made
-   of hard links to the base plus the update's files, so 1.00 stays installed exactly as it was (about 0.7 GB more).
-4. With both installed, **Game version** on the Play page chooses which one starts. Nothing is copied.
+3. Optional: **Play → Install update...** and select the 1.01 or the 1.02 update package (either, or both; 1.01 is
+   not needed for 1.02). Each update gets a folder of its own made of hard links to the base plus the update's files,
+   so 1.00 stays installed exactly as it was (about 0.6 GB more each).
+4. With more than one installed, **Game version** on the Play page chooses which one starts. Nothing is copied.
+   **Remove update** deletes one update's own folder and boot image; 1.00, the other update, saves, trophies and
+   settings are kept, and 1.00 becomes the game version when the removed update was.
 5. **Play**.
 
 The installer stages everything next to the active installation, verifies it (identity, required archives, eboot hash,
@@ -37,13 +41,21 @@ or a base package in Install update, is refused before anything is unpacked.
 
 ## Launcher
 
-TRG Launcher pages: **Play** (install game, install update, game version), **Display**, **Graphics**, **Gameplay**
-(language, frame readouts, overlay programs), **Controls** (detected controllers, keyboard bindings, port hotkeys),
+TRG Launcher pages: **Play** (install game, install update, game version, remove update), **Display**, **Graphics**, **Gameplay**
+(text language, voice language note, skip intro, frame readouts, overlay programs), **Controls** (detected controllers,
+controller icons, keyboard bindings, port hotkeys),
 **Trophies** (kept on this PC), **Bug Report**, **About** (folders, logs, diagnostics, sponsor). There is no Online
 page and no Cheats page.
 
 **Bug reports are never uploaded.** The page builds a privacy-filtered report from one chosen log, shows a preview,
 saves it to `logs\reports\`, and opens the GitHub issue tracker only when asked. Attaching the file is your own step.
+
+**Languages.** Text Language (menus and subtitles: English, French, German, Italian, Spanish) is a launcher choice and is
+kept as chosen: a language a version lacks shows the nearest supported one and the choice stays. Voice Language is shown
+for information only: 1.00 has the Japanese voices only; 1.01 and 1.02 ship the English ones too (`ROBO_PATCH_US.CPK`) and
+the game's own Audio Language option picks between them. **Skip Intro** answers the startup logo scene's button poll, the
+game's own skip. **Controller icons** Xbox repaints the button atlas and the icons on the built-in manual's pages in the
+installed archives, reversibly (`scripts/prompts/README.md`).
 
 ## Building
 

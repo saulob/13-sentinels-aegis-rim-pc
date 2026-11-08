@@ -9,6 +9,7 @@
 #include <string_view>
 
 #include "game_profile.h"
+#include "language_support.h"
 #include "trg/settings.h"
 
 struct TsrRunSettings;
@@ -33,6 +34,9 @@ inline constexpr char kGraphicsCardKey[] = "graphics_card";
 inline constexpr char kAntiAliasingKey[] = "smaa";
 inline constexpr char kAnisotropyKey[] = "anisotropy";
 inline constexpr char kTextLanguageKey[] = "text_language";
+inline constexpr char kSkipIntroKey[] = "skip_intro";
+// The installed archives are the truth; this remembers the choice for a reinstall (controller_prompts.h). Reset keeps it.
+inline constexpr char kControllerIconsKey[] = "controller_icons";
 inline constexpr char kShowFpsTitleKey[] = "show_fps_title";
 inline constexpr char kShowResolutionTitleKey[] = "show_resolution_title";
 inline constexpr char kShowFrameCounterKey[] = "show_fps";
@@ -103,16 +107,12 @@ private:
     Values pending_;
 };
 
-// A saved text_language that is not one of `languages` (not empty) becomes the first of them. True when it changed
-// (pending until Save).
-bool NormalizeTextLanguage(trg::SettingsStore& settings, std::span<const TextLanguage> languages);
-
 // The launcher opens when the game files are not ready, or when the setting is On or Shift is held, unless it was
 // skipped once. A game that is not ready always shows it: it is where the files are installed.
 bool LauncherWanted(bool game_ready, bool show_setting, bool shift_held, bool skip_once);
 
 // The "Settings:" lines of the run log (tsr_log_settings_summary).
-std::string SettingsSummary(const LauncherSettings& settings, const GameBuild* build,
-                            std::span<const TextLanguage> languages, const TsrRunSettings* run);
+std::string SettingsSummary(const LauncherSettings& settings, const GameBuild* build, const LanguageSupport& support,
+                            const TsrRunSettings* run);
 
 } // namespace tsr

@@ -78,6 +78,25 @@ InstallResult StageUpdate(const std::filesystem::path& base_app0, const std::fil
 // Makes a complete installed build the active one; its folder is not changed. False when it is not ready.
 bool ActivateInstalledBuild(const GameRoots& roots, const GameBuild& build, std::span<const GameBuild> builds = SupportedBuilds());
 
+enum class RemoveStatus { kRemoved, kNotUpdate, kNotInstalled, kForeignFolder, kInUse };
+
+struct RemoveResult {
+    RemoveStatus status = RemoveStatus::kRemoved;
+    std::string detail;            // for the log, not the UI
+    bool base_selected = false;    // the removed update was the active build; the base is now
+    bool ok() const { return status == RemoveStatus::kRemoved; }
+};
+
+// Removes an installed update build: its game folder and boot image, nothing else. The base build, the other updates,
+// saves, trophies and settings live elsewhere or in other folders and are not touched; the update's files that are links
+// into the base only lose that link. Both folders are first renamed aside, so a removal that cannot start changes nothing
+// and one that stops halfway leaves no folder that passes as installed. When the update was active, the base becomes it.
+RemoveResult RemoveInstalledUpdate(const GameRoots& roots, const GameBuild& build,
+                                   std::span<const GameBuild> builds = SupportedBuilds());
+
+// Deletes what an interrupted removal left aside. True when nothing is left.
+bool FinishInterruptedRemovals(const GameRoots& roots, std::span<const GameBuild> builds = SupportedBuilds());
+
 // True when the game was chosen in the wrong action: the update package in Install game, or the reverse.
 bool RefusedPackageKind(InstallStatus status);
 

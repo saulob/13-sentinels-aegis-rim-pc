@@ -104,7 +104,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('--game-root', type=Path, default=ROOT / 'game')
     parser.add_argument('--title', help='title to prepare: CUSA19610')
-    parser.add_argument('--version', help='profile version to prepare (CUSA19610: 1.00 or 1.02)')
+    parser.add_argument('--version', help='profile version to prepare (CUSA19610: 1.00, 1.01 or 1.02)')
     parser.add_argument('--scope', choices=('core', 'full'), default='core',
                         help='core: executables, modules and metadata only; full: all game data')
     args = parser.parse_args()

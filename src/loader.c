@@ -17,6 +17,7 @@
 #include "tsr_resolution.h"
 #include "runtime_log.h"
 #include "isa_emulate.h"
+#include "skip_intro.h"
 #if !defined(__x86_64__) || !defined(__GNUC__)
 #error The 13 Sentinels: Aegis Rim PC Port requires x86-64 GCC or Clang (including MinGW).
 #endif
@@ -574,6 +575,7 @@ int main(int argc, char **argv) {
     render_target=tsr_render_target(render_resolution,aspect_ratio);
     runtime_tsr_set_neo_mode(render_target.pro_memory);
     runtime_set_language(tsr_text_language(settings_file,paths.image_dir,app0));
+    const int skip_intro_wanted=tsr_skip_intro(settings_file);
     runtime_pad_set_settings(settings_file);
     printf("Overlay compatibility: %s game process\n",game_child ? "separate" : "original");
     if (content_profile) {
@@ -706,7 +708,10 @@ int main(int argc, char **argv) {
             if (!executable) fail("native function is not executable");
         }
     }
-    image = allocate(round_page(size));
+    /* The hook stubs follow the image, within a jump of it. */
+    const size_t hook_bytes = round_page(skip_intro_stub_bytes());
+    image = allocate(round_page(size) + hook_bytes);
+    uint8_t *const hook_stubs = image + round_page(size);
     if (fread(image, 1, size, f) != size || fgetc(f) != EOF) fail("incorrect memory image size");
     fclose(f);
     if (runtime_memory_prepare()) {
@@ -797,6 +802,10 @@ int main(int argc, char **argv) {
     printf("TSR: render resolution %dx%d (%s)%s\n",render_target.width,render_target.height,render_resolution->key,
            render_target.pro_memory ? ", PS4 Pro memory path" : "");
     printf("TSR: Aspect ratio: %s, render target %dx%d\n",aspect_ratio->name,render_target.width,render_target.height);
+    const char *verified_build=known_build ? build_key : NULL;
+    if (skip_intro_wanted)
+        skip_intro_install(image,size,entry,verified_build,hook_stubs,skip_intro_stub_bytes());
+    else puts("Skip Intro: off");
     const TsrRunSettings run_settings={known_build ? game_build.label : NULL,render_target.width,render_target.height,
                                        render_resolution->key,aspect_ratio->name};
     tsr_startup_phase("patches installed");
@@ -823,6 +832,7 @@ int main(int argc, char **argv) {
             executable_entry = 1;
     }
     if (!executable_entry) fail("entry is not executable");
+    protect(hook_stubs, hook_bytes, 5);
     printf("Mapped %" PRIu64 " bytes, %" PRIu64 " segments; applied %" PRIu64 " relocations\n", size, ns, nr);
     tsr_startup_phase("guest image mapped");
     if (native_libc) {

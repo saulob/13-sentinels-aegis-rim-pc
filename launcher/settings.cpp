@@ -16,6 +16,7 @@
 #include "game_files.h"
 #include "game_process.h"
 #include "utf8.h"
+#include "language_support.h"
 
 namespace tsr {
 namespace {
@@ -37,6 +38,8 @@ constexpr ManagedSetting kBaseSettings[] = {
     {kAntiAliasingKey, "0"},
     {kAnisotropyKey, "0"},
     {kTextLanguageKey, "english"},
+    {kSkipIntroKey, "0"},
+    {kControllerIconsKey, "playstation"},
     {kShowFpsTitleKey, "0"},
     {kShowResolutionTitleKey, "0"},
     {kShowFrameCounterKey, "0"},
@@ -93,6 +96,12 @@ bool IsValidSetting(std::string_view key, std::string_view value) {
             return std::any_of(build.text_languages.begin(), build.text_languages.end(),
                                [&](const TextLanguage& language) { return value == language.key; });
         });
+    }
+    if (key == kSkipIntroKey) {
+        return one_of({"0", "1"});
+    }
+    if (key == kControllerIconsKey) {
+        return one_of({"playstation", "xbox"});
     }
     if (key == kPresentationKey) {
         return std::any_of(std::begin(kPresentationChoices), std::end(kPresentationChoices),
@@ -175,7 +184,7 @@ bool LauncherSettings::SaveNow(const Values& values) {
 
 void LauncherSettings::ResetToDefaults() {
     for (const ManagedSetting& setting : ManagedSettings()) {
-        if (!IsLauncherPlacementSetting(setting.key)) {
+        if (!IsLauncherPlacementSetting(setting.key) && setting.key != kControllerIconsKey) {
             pending_[std::string(setting.key)] = std::string(setting.default_value);
         }
     }
@@ -192,16 +201,6 @@ bool LauncherSettings::WriteFile(const Values& changes) {
         file.Set(key, value);
     }
     return file.Save();
-}
-
-bool NormalizeTextLanguage(trg::SettingsStore& settings, std::span<const TextLanguage> languages) {
-    const std::string saved = settings.Get(kTextLanguageKey, languages.front().key);
-    const std::string_view effective = ResolveTextLanguage(languages, saved).key;
-    if (saved == effective) {
-        return false;
-    }
-    settings.Set(kTextLanguageKey, std::string(effective));
-    return true;
 }
 
 bool LauncherWanted(bool game_ready, bool show_setting, bool shift_held, bool skip_once) {
@@ -245,10 +244,24 @@ namespace {
 
 const char* OnOff(bool on) { return on ? "on" : "off"; }
 
+std::string Preferred(std::string_view effective, std::string_view preference) {
+    return preference.empty() || preference == effective ? "" : " (preferred " + std::string(preference) + ")";
+}
+
+std::string TextSummary(const LauncherSettings& settings, const LanguageSupport& support) {
+    const std::string preference = settings.Get(kTextLanguageKey);
+    const TextLanguage& effective = EffectiveTextLanguage(support, preference);
+    return std::string(effective.name) + Preferred(effective.key, preference);
+}
+
+std::string VoiceSummary(const LanguageSupport& support) {
+    return support.english_voices ? "game settings" : "Japanese";
+}
+
 } // namespace
 
-std::string SettingsSummary(const LauncherSettings& settings, const GameBuild* build,
-                            std::span<const TextLanguage> languages, const TsrRunSettings* run) {
+std::string SettingsSummary(const LauncherSettings& settings, const GameBuild* build, const LanguageSupport& support,
+                            const TsrRunSettings* run) {
     std::string out;
     const auto line = [&out](const std::string& text) { out += "Settings: " + text + "\n"; };
     const char* build_label = run ? run->game_build : build ? build->label : nullptr;
@@ -272,9 +285,11 @@ std::string SettingsSummary(const LauncherSettings& settings, const GameBuild* b
         line("Render resolution " + settings.Get(kRenderResolutionKey, kNativeResolution) + ", aspect ratio " +
              settings.Get(kAspectRatioKey, kDefaultAspectRatio));
     }
-    line(std::string("Menu & Subtitles ") + std::string(ResolveTextLanguage(languages, settings.Get(kTextLanguageKey)).name) +
+    line("Text Language " + TextSummary(settings, support) + ", Voice Language " + VoiceSummary(support) +
          ", overlay programs " +
          (kSeparateGameProcessAvailable ? OnOff(settings.GetBool(kAllowOverlayProgramsKey, false)) : "unsupported"));
+    line(std::string("Skip intro ") + OnOff(settings.GetBool(kSkipIntroKey, false)) + ", controller icons " +
+         settings.Get(kControllerIconsKey, "playstation"));
     return out;
 }
 
@@ -285,14 +300,20 @@ extern "C" void tsr_log_settings_summary(const char* settings_file, const char* 
     using namespace tsr;
     const LauncherSettings settings(PathFromUtf8(settings_file ? settings_file : ""));
     const GameBuild* build = BuildOfImageDir(image_dir);
-    const std::vector<TextLanguage> languages = InstalledTextLanguages(PathFromUtf8(app0 ? app0 : ""), build);
-    std::fputs(SettingsSummary(settings, build, languages, run).c_str(), stdout);
+    const LanguageSupport support = LanguagesOf(PathFromUtf8(app0 ? app0 : ""), build);
+    std::fputs(SettingsSummary(settings, build, support, run).c_str(), stdout);
+}
+
+extern "C" int tsr_skip_intro(const char* settings_file) {
+    using namespace tsr;
+    const LauncherSettings settings(PathFromUtf8(settings_file ? settings_file : ""));
+    return settings.GetBool(kSkipIntroKey, false) ? 1 : 0;
 }
 
 extern "C" int tsr_text_language(const char* settings_file, const char* image_dir, const char* app0) {
     using namespace tsr;
     const GameBuild* build = BuildOfImageDir(image_dir);
     const LauncherSettings settings(PathFromUtf8(settings_file ? settings_file : ""));
-    const std::vector<TextLanguage> languages = InstalledTextLanguages(PathFromUtf8(app0 ? app0 : ""), build);
-    return ResolveTextLanguage(languages, settings.Get(kTextLanguageKey)).ps4_id;
+    const LanguageSupport support = LanguagesOf(PathFromUtf8(app0 ? app0 : ""), build);
+    return EffectiveTextLanguage(support, settings.Get(kTextLanguageKey)).ps4_id;
 }

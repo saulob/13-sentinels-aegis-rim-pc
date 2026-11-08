@@ -68,6 +68,9 @@ int tsr_aspect_ratio(const char *settings_file, const char *image_dir);
  * when the file or the value is missing or not one of them. */
 int tsr_text_language(const char *settings_file, const char *image_dir, const char *app0);
 
+/* 1 when skip_intro is on in the settings file (off by default). */
+int tsr_skip_intro(const char *settings_file);
+
 /* 1 when the settings file keeps the logs of normal sessions (detailed_logging; 1 by default). */
 int tsr_detailed_logging(const char *settings_file);
 
