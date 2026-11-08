@@ -183,25 +183,19 @@ trg::HeaderPainter LauncherHeader(std::function<ImTextureID(int, int)> art, floa
             const ImU32 clear = trg::Col(c.theme.bg, 0.0f), solid = trg::Col(c.theme.bg);
             c.draw->AddRectFilledMultiColor(ImVec2(c.min.x, c.max.y - (c.max.y - c.min.y) * share), c.max, clear, clear, solid, solid);
         };
-        fade(kHeaderFade);
-        const float height = ImGui::GetMainViewport()->Size.y;
-        // Down to the panels, which are drawn later and cover the rest.
-        const float bottom = c.max.y + trg::layout::kBodyGap * c.scale;
-        const HeaderArtRect rect = PlaceHeaderArt(c.min.y, c.max.x, bottom, height, c.scale, art_aspect);
+        const HeaderArtRect rect = PlaceHeaderArt(c.min.y, c.max.x, c.max.y, art_aspect);
         const float framebuffer = std::max(ImGui::GetIO().DisplayFramebufferScale.x, 1.0f);
         const ImTextureID texture = art(static_cast<int>((rect.max_x - rect.min_x) * framebuffer + 0.5f),
                                         static_cast<int>((rect.max_y - rect.min_y) * framebuffer + 0.5f));
-        if (texture == ImTextureID{}) {
-            return;
+        if (texture != ImTextureID{}) {
+            c.draw->PushClipRect(c.min, c.max, false);
+            for (const HeaderArtStrip& strip : SplitHeaderArt(rect)) {
+                c.draw->AddImage(ImTextureRef(texture), ImVec2(strip.min_x, rect.min_y), ImVec2(strip.max_x, rect.max_y),
+                                 ImVec2(strip.min_u, 0.0f), ImVec2(strip.max_u, 1.0f));
+            }
+            c.draw->PopClipRect();
         }
-        const float art_height = rect.max_y - rect.min_y;
-        const float top_v = (c.min.y - rect.min_y) / art_height, bottom_v = (bottom - rect.min_y) / art_height;
-        c.draw->PushClipRect(c.min, ImVec2(c.max.x, bottom), false);
-        for (const HeaderArtStrip& strip : SplitHeaderArt(rect)) {
-            c.draw->AddImage(ImTextureRef(texture), ImVec2(strip.min_x, c.min.y), ImVec2(strip.max_x, bottom),
-                             ImVec2(strip.min_u, top_v), ImVec2(strip.max_u, bottom_v));
-        }
-        c.draw->PopClipRect();
+        fade(kHeaderFade);
     };
 }
 
@@ -662,7 +656,7 @@ private:
             header_art_height_ = height;
             host_.DestroyTexture(header_art_);
             const std::vector<uint8_t> rgba = ScaleArtRgba(header_art_image_.rgba.data(), header_art_image_.width,
-                                                           header_art_image_.height, width, height, kHeaderArtAlphaGain);
+                                                           header_art_image_.height, width, height);
             header_art_ = rgba.empty() ? ImTextureID{} : host_.CreateTexture(rgba.data(), width, height);
         }
         return header_art_;

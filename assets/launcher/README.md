@@ -1,11 +1,21 @@
 # Launcher header art
 
-`header-art.png` is drawn by `tools/make-branding.py` (an abstract skyline in the launcher accent, 3840x432, transparent
-background), which also draws `packaging/icons/app-icon.ico`. Both are original; no game asset is used. Run the script
-again after changing it.
+`header-art-source.png` is the official art (2170x725 RGBA, original, no game asset); only its 2170x306 picture band,
+from row 210, is used. `header-art.png` is derived from it: 3840x432 (8.89:1) RGBA, the band scaled uniformly and
+anchored right. Do not edit `header-art.png` separately, and there is no SVG for this art.
 
-The launcher draws the PNG over its header gradient, anchored to the header's right edge (`launcher/header_art.h` sets
-its scale and brightness); its empty left side keeps the title readable.
+A horizontal alpha mask lets the launcher's own header gradient show through on the left: alpha is 0 up to 22% of the
+width, rises along a smoothstep curve and reaches full at 55%, so the art has no visible edge. Regenerate with
+(ffmpeg on PATH):
+
+```powershell
+tools\make-header-art.ps1
+```
+
+Only `header-art.png` ships; the source stays in the repository. The launcher draws it over the header gradient at the
+header's full height, flush with the header's top, right and bottom; a narrow window cuts it from the left
+(`launcher/header_art.h`). Without the file it keeps the gradient alone. `tools/make-branding.py` draws only the
+application icon.
 
 # Sponsor heart
 

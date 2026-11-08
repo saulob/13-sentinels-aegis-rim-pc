@@ -28,12 +28,10 @@ std::vector<std::vector<Weight>> AreaWeights(int source, int target) {
 
 } // namespace
 
-HeaderArtRect PlaceHeaderArt(float top, float right, float bottom, float viewport_height, float scale, float aspect) {
-    const float art_height = std::clamp(viewport_height * 0.2f, 120.0f * scale, 190.0f * scale) * kHeaderArtScale;
-    const float height = std::ceil(std::max(bottom - top, art_height));
+HeaderArtRect PlaceHeaderArt(float top, float right, float bottom, float aspect) {
+    const float height = std::ceil(bottom - top);
     const float width = std::round(height * aspect);
-    const float above = std::floor(std::min(height - (bottom - top), height * kHeaderArtTopCrop));
-    return {right - width, top - above, right, top - above + height};
+    return {right - width, top, right, top + height};
 }
 
 std::vector<HeaderArtStrip> SplitHeaderArt(const HeaderArtRect& rect) {

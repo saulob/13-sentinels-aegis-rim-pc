@@ -8,11 +8,7 @@
 namespace tsr {
 
 inline constexpr float kHeaderArtAspect = 3840.0f / 432.0f;
-inline constexpr float kHeaderArtInkStart = 2312.0f / 3840.0f;  // the image is empty left of its first stroke
 inline constexpr int kHeaderArtStripWidth = 128;
-inline constexpr float kHeaderArtScale = 1.15f;
-inline constexpr float kHeaderArtTopCrop = 0.12f;      // the image's top band is nearly empty
-inline constexpr float kHeaderArtAlphaGain = 2.0f;
 inline constexpr float kHeaderFade = 0.35f;            // of the header, over its gradient
 
 struct HeaderArtRect {
@@ -23,8 +19,8 @@ struct HeaderArtStrip {
     float min_x, max_x, min_u, max_u;
 };
 
-// Right edge of the window, whole pixels, at its own size. `bottom` is where the art is cut, and it is usually taller.
-HeaderArtRect PlaceHeaderArt(float top, float right, float bottom, float viewport_height, float scale, float aspect);
+// Full header height, whole pixels, flush with the header's top and right; only the left is cut when the window is narrow.
+HeaderArtRect PlaceHeaderArt(float top, float right, float bottom, float aspect);
 
 // SDL's software renderer, the launcher's on Windows, drops triangles whose texture width times area overflows an int.
 std::vector<HeaderArtStrip> SplitHeaderArt(const HeaderArtRect& rect);

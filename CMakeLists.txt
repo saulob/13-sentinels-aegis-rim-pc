@@ -125,16 +125,22 @@ if (WIN32)
     add_dependencies(tsr_game trg-updater)
 endif()
 
-# The launcher reads its images next to the executable.
-add_custom_command(TARGET tsr_game POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:tsr_game>/assets/launcher"
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        "${CMAKE_CURRENT_SOURCE_DIR}/assets/launcher/header-art.png"
-        "$<TARGET_FILE_DIR:tsr_game>/assets/launcher/header-art.png"
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        "${CMAKE_CURRENT_SOURCE_DIR}/assets/launcher/sponsor-heart.png"
-        "$<TARGET_FILE_DIR:tsr_game>/assets/launcher/sponsor-heart.png"
-    VERBATIM)
+# The launcher reads its images next to the executable; each copy depends on its source file, so an image-only change syncs.
+set(TSR_LAUNCHER_ASSET_DIR "$<TARGET_FILE_DIR:tsr_game>/assets/launcher")
+set(TSR_LAUNCHER_ASSET_COPIES)
+foreach(asset header-art.png sponsor-heart.png)
+    set(asset_source "${CMAKE_CURRENT_SOURCE_DIR}/assets/launcher/${asset}")
+    set(asset_stamp "${CMAKE_CURRENT_BINARY_DIR}/launcher-assets/${asset}.stamp")
+    add_custom_command(OUTPUT "${asset_stamp}"
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${TSR_LAUNCHER_ASSET_DIR}"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different "${asset_source}" "${TSR_LAUNCHER_ASSET_DIR}/${asset}"
+        COMMAND ${CMAKE_COMMAND} -E touch "${asset_stamp}"
+        DEPENDS "${asset_source}"
+        VERBATIM)
+    list(APPEND TSR_LAUNCHER_ASSET_COPIES "${asset_stamp}")
+endforeach()
+add_custom_target(tsr_launcher_assets DEPENDS ${TSR_LAUNCHER_ASSET_COPIES})
+add_dependencies(tsr_game tsr_launcher_assets)
 
 # Focused headless tests (tools\test.ps1); none is part of the default build and none opens a window or starts the game.
 function(tsr_add_test name)
