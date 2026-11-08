@@ -17,6 +17,7 @@
 #include "tsr_resolution.h"
 #include "runtime_log.h"
 #include "isa_emulate.h"
+#include "exit_game.h"
 #include "skip_intro.h"
 #if !defined(__x86_64__) || !defined(__GNUC__)
 #error The 13 Sentinels: Aegis Rim PC Port requires x86-64 GCC or Clang (including MinGW).
@@ -704,7 +705,7 @@ int main(int argc, char **argv) {
         }
     }
     /* The hook stubs follow the image, within a jump of it. */
-    const size_t hook_bytes = round_page(skip_intro_stub_bytes());
+    const size_t hook_bytes = round_page(skip_intro_stub_bytes() + exit_game_stub_bytes());
     image = allocate(round_page(size) + hook_bytes);
     uint8_t *const hook_stubs = image + round_page(size);
     if (fread(image, 1, size, f) != size || fgetc(f) != EOF) fail("incorrect memory image size");
@@ -806,6 +807,8 @@ int main(int argc, char **argv) {
     if (skip_intro_wanted)
         skip_intro_install(image,size,entry,verified_build,hook_stubs,skip_intro_stub_bytes());
     else puts("Skip Intro: off");
+    if (gpu_enabled) exit_game_set_handler(tsrgpu_request_close);
+    exit_game_install(image,size,entry,verified_build,hook_stubs+skip_intro_stub_bytes(),exit_game_stub_bytes());
     const TsrRunSettings run_settings={known_build ? game_build.label : NULL,render_resolution->width,render_resolution->height,
                                        render_resolution->key};
     tsr_startup_phase("patches installed");

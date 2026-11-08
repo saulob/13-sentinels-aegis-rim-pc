@@ -94,7 +94,13 @@ enable_language(RC)
 set_source_files_properties(src/13_sentinels_aegis_rim.rc PROPERTIES OBJECT_DEPENDS
     "${CMAKE_SOURCE_DIR}/packaging/icons/app-icon.ico;${CMAKE_SOURCE_DIR}/src/13_sentinels_aegis_rim.manifest;${CMAKE_BINARY_DIR}/generated/tsr_version.h")
 
-set(TSR_HOOK_SOURCES src/guest_hook.c src/code_signature.c src/skip_intro.c)
+set(TSR_HOOK_SOURCES src/guest_hook.c src/code_signature.c src/skip_intro.c src/exit_game.c src/exit_game_assets.c
+    src/exit_game_data.c)
+# The Exit Game title labels are assembled into exit_game_data.c (.incbin): rebuild it when they change.
+set(TSR_EXIT_GAME_LABELS ${CMAKE_SOURCE_DIR}/assets/exit_game/title-labels.bin)
+set_source_files_properties(src/exit_game_data.c PROPERTIES
+    COMPILE_DEFINITIONS "TSR_EXIT_GAME_LABELS_PATH=\"${TSR_EXIT_GAME_LABELS}\""
+    OBJECT_DEPENDS "${TSR_EXIT_GAME_LABELS}")
 add_executable(tsr_game WIN32 src/loader.c src/isa_emulate.c src/compat_win.c src/module_diagnostics.c src/module_history.c
     src/call_site.c src/runtime_log.c src/13_sentinels_aegis_rim.rc ${TSR_RUNTIME_SOURCES} ${TSR_HOOK_SOURCES})
 set_target_properties(tsr_game PROPERTIES OUTPUT_NAME "13_sentinels_aegis_rim")
@@ -142,6 +148,7 @@ target_link_libraries(tsr-memory-windows-tests PRIVATE onecore -pthread)
 target_link_options(tsr-memory-windows-tests PRIVATE -Wl,--disable-high-entropy-va)
 tsr_add_test(tsr-log-tests tests/log_tests.c src/runtime_log.c src/runtime_session_log.c)
 tsr_add_test(tsr-game-hook-tests tests/game_hook_tests.c ${TSR_HOOK_SOURCES})
+tsr_add_test(tsr-exit-game-tests tests/exit_game_tests.c ${TSR_HOOK_SOURCES})
 tsr_add_test(tsr-module-history-tests tests/module_history_tests.c src/module_history.c src/call_site.c src/startup_phase.c)
 tsr_add_test(tsr-sdl-compat-tests tests/sdl_compat_tests.cpp)
 tsr_add_test(tsr-window-tests tests/window_fit_tests.cpp)

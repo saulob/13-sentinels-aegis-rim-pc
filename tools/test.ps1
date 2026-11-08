@@ -109,6 +109,24 @@ function Invoke-PromptArt {
     return Result 'PASS' '' $notes
 }
 
+function Invoke-ExitGameLayout {
+    $base = Join-Path $root 'game\prepared\CUSA19610-1.00'
+    $update = Join-Path $root 'game\prepared\CUSA19610-1.02'
+    if (-not (Test-Path -LiteralPath (Join-Path $base 'ROBO_US.CPK'))) { return Result 'SKIPPED' 'no prepared USA 1.00 game (game\prepared\CUSA19610-1.00)' }
+    $python = Get-Python
+    if (-not $python) { return Result 'SKIPPED' 'Python 3 not found (tools\setup.ps1)' }
+    $modules = Invoke-Native { & $python.Exe @($python.Args) '-I' '-c' 'import numpy, PIL, scipy' }
+    if ($modules.Code -ne 0) { return Result 'SKIPPED' 'numpy, Pillow and scipy are not installed (tools\setup.ps1 -InstallPython)' }
+    $run = Invoke-Native { & $python.Exe @($python.Args) '-I' (Join-Path $root 'tests\exit_game_layout_tests.py') $base $update }
+    $notes = @($run.Lines | Where-Object { $_ -match '^exit game' })
+    if ($run.Code -eq 2) { return Result 'SKIPPED' (($run.Lines | Select-Object -Last 1) -join ' ') }
+    if ($run.Code -ne 0) {
+        $run.Lines | Where-Object { $_ -match '^FAIL|Error' } | Select-Object -First 12 | ForEach-Object { Write-Host "    $_" }
+        return Result 'FAIL' (@($run.Lines | Where-Object { $_ -match '^FAIL|Error' } | Select-Object -First 3) -join '; ') $notes
+    }
+    return Result 'PASS' '' $notes
+}
+
 function Invoke-BugReportService {
     $node = Get-Command node -ErrorAction SilentlyContinue
     if (-not $node) { return Result 'SKIPPED' 'Node.js 22 or newer not found' }
@@ -152,6 +170,8 @@ $steps = @(
     (Step 'Launcher' 'windowed-mode size and centring' 'tsr-window-tests'),
     (Step 'Launcher' 'SDL gamepad defaults' 'tsr-sdl-compat-tests'),
     (Step 'Features' 'Skip Intro hook sites, refusals, hook run on synthetic code' 'tsr-game-hook-tests'),
+    (Step 'Features' 'Exit Game: label data, texture and layout patches, hooks, sites and install on the real 1.00/1.01/1.02 images' 'tsr-exit-game-tests'),
+    (Step 'Features' 'Exit Game on the real title files of the five languages (Python, game\prepared)' -Block { Invoke-ExitGameLayout }),
     (Step 'Features' 'Xbox patches, real archive switching, refusals, rollback, shared links, languages, build status, settings' 'tsr-game-feature-tests'),
     (Step 'Audio' 'Ajm contexts, instances, batch slots, pending batches, errors' 'tsr-ajm-tests'),
     (Step 'Video' 'presentation pacing' 'tsr-frame-pacing-tests'),

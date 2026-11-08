@@ -6,63 +6,18 @@
 #include <string.h>
 #include <windows.h>
 
+#include "boot_image.h"
 #include "guest_hook.h"
 #include "skip_intro.h"
 
 static int checks, failures;
 #define CHECK(condition) do { ++checks; if (!(condition)) { ++failures; printf("FAIL line %d: %s\n", __LINE__, #condition); } } while (0)
 
-typedef struct {
-    uint8_t *bytes;
-    uint64_t size, entry;
-} Image;
-
-static uint64_t le64(const uint8_t *p) {
-    uint64_t v = 0;
-    for (int i = 7; i >= 0; --i) v = (v << 8) | p[i];
-    return v;
-}
-
-/* The memory image of a boot.bin, laid out as the loader reads it; relocations are left unapplied (no site has one). */
-static int load_image(const char *path, Image *image) {
-    FILE *f = fopen(path, "rb");
-    if (!f) return 0;
-    fseek(f, 0, SEEK_END);
-    const long length = ftell(f);
-    fseek(f, 0, SEEK_SET);
-    uint8_t *file = malloc((size_t)length);
-    const int read_all = file && fread(file, 1, (size_t)length, f) == (size_t)length;
-    fclose(f);
-    if (!read_all || length < 8 * 15 || memcmp(file, "TSRBOOT1", 8)) { free(file); return 0; }
-    const uint8_t *p = file + 8;
-    const uint64_t size = le64(p), entry = le64(p + 8), ns = le64(p + 16), nr = le64(p + 24), imports = le64(p + 32);
-    p += 6 * 8 + 8 + 4 * 8;
-    const uint64_t modules = le64(p);
-    p += 8 + modules * 7 * 8;
-    const uint64_t bindings = le64(p);
-    p += 8 + bindings * 3 * 8 + ns * 3 * 8 + imports * 128 + nr * 4 * 8;
-    if ((uint64_t)(p - file) + size != (uint64_t)length) { free(file); return 0; }
-    image->bytes = malloc(size);
-    memcpy(image->bytes, p, size);
-    image->size = size;
-    image->entry = entry;
-    free(file);
-    return 1;
-}
-
-static int load_build(const char *folder, const char *work, Image *image) {
-    char path[512];
-    snprintf(path, sizeof(path), "%s/build/image/%s/boot.bin", TSR_SOURCE_DIR, folder);
-    if (load_image(path, image)) return 1;
-    snprintf(path, sizeof(path), "%s/game/work/%s/boot.bin", TSR_SOURCE_DIR, work);
-    return load_image(path, image);
-}
-
 static void test_real_sites(void) {
-    Image base = {0}, first = {0}, update = {0};
-    const int have_base = load_build("CUSA19610-1.00", "image-1.00", &base);
-    const int have_first = load_build("CUSA19610-1.01", "image-1.01", &first);
-    const int have_update = load_build("CUSA19610-1.02", "image-1.02", &update);
+    BootImage base = {0}, first = {0}, update = {0};
+    const int have_base = boot_image_load_build("CUSA19610-1.00", "image-1.00", &base);
+    const int have_first = boot_image_load_build("CUSA19610-1.01", "image-1.01", &first);
+    const int have_update = boot_image_load_build("CUSA19610-1.02", "image-1.02", &update);
     uint32_t site = 0;
     if (have_base) {
         CHECK(skip_intro_locate(base.bytes, base.size, "CUSA19610-1.00", &site) == SKIP_INTRO_FOUND && site == 0x3aff67);
