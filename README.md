@@ -12,6 +12,8 @@
 
 </div>
 
+<img width="1281" height="762" alt="2026-11-08_19-05" src="https://github.com/user-attachments/assets/8925d899-5758-47c0-89a2-402e7531b96c" />
+
 > **Version 0.1.0, the first release**, for Windows (ZIP) and Linux (AppImage) together. The game installs, boots and
 > plays on Windows with the Vulkan renderer. The Linux AppImage has the same applicable feature set and is
 > **experimental**: it is built and checked headlessly but has not been played through yet. See [docs/LINUX.md](docs/LINUX.md).
@@ -107,6 +109,10 @@ English ones too, and the game's own Audio Language option picks between them. S
 trophies are one shared list. The Japanese and Asian games can carry over a prologue demo save found in the user folder. **Skip Intro** answers the startup logo scene's button poll, the
 game's own skip. **Controller icons** Xbox repaints the button atlas and the icons on the built-in manual's pages in the
 installed archives, reversibly (`scripts/prompts/README.md`).
+
+## Screenshots
+
+<img width="1279" height="763" alt="2026-11-08_20-54" src="https://github.com/user-attachments/assets/02509ac3-7426-4266-9708-80555894da04" />
 
 ## Linux
 
