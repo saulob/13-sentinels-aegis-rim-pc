@@ -1,8 +1,16 @@
-# 13 Sentinels: Aegis Rim PC Port
+<div align="center">
 
-A native Windows x64 and Linux x86_64 port of **13 Sentinels: Aegis Rim** (PlayStation 4: USA, Europe, Japan and Asia).
-The game's original x86-64 code runs directly on the PC through replacement PS4 system libraries and a Vulkan renderer
-derived from shadPS4.
+# 13 Sentinels: Aegis Rim - PC Port
+
+### 13 Sentinels: Aegis Rim for PlayStation 4, running natively on Windows, and experimentally on Linux and Steam Deck, with the TRG launcher and modern PC options
+
+[![Latest release](https://img.shields.io/github/v/release/saulob/13-sentinels-aegis-rim-pc?style=for-the-badge&label=release&color=4f7fd7&labelColor=07101f&include_prereleases&cacheSeconds=300)](https://github.com/saulob/13-sentinels-aegis-rim-pc/releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/saulob/13-sentinels-aegis-rim-pc/total?style=for-the-badge&color=4f7fd7&labelColor=07101f&cacheSeconds=300)](https://github.com/saulob/13-sentinels-aegis-rim-pc/releases)
+![Platforms](https://img.shields.io/badge/platforms-Windows%20%7C%20Linux%20experimental%20%7C%20Steam%20Deck%20experimental-00acc1?style=for-the-badge&labelColor=07101f)
+
+<sub>The original PS4 x86-64 game code runs directly on the PC through replacement PS4 system libraries, with a Vulkan renderer derived from <a href="https://github.com/shadps4-emu/shadPS4">shadPS4</a>. <b>No game files included</b>: bring your own legally obtained, supported 13 Sentinels: Aegis Rim PS4 package.</sub>
+
+</div>
 
 > **Version 0.1.0, the first release**, for Windows (ZIP) and Linux (AppImage) together. The game installs, boots and
 > plays on Windows with the Vulkan renderer. The Linux AppImage has the same applicable feature set and is
@@ -138,6 +146,14 @@ Linux (Ubuntu 20.04 prepared by `packaging/linux/ci-deps.sh`, the release baseli
 | `server/` | The bug report service: a Cloudflare Worker and its private dashboard (deployed by hand) |
 | `scripts/` | Read-only developer tools: package and module inspection, boot image preparation, import coverage |
 | `docs/` | Technical notes, starting with [FIRST_BOOT.md](docs/FIRST_BOOT.md) |
+
+## Sponsoring
+
+13 Sentinels: Aegis Rim PC Port is maintained and developed in my free time. If you find it useful, consider supporting its continued development.
+
+<p align="center">
+<a href="https://github.com/sponsors/saulob" target="_blank"><img src="https://img.shields.io/badge/GitHub%20Sponsors-Sponsor-EA4AAA?style=for-the-badge&logo=githubsponsors&logoColor=white" alt="GitHub Sponsors"></a>
+</p>
 
 ## Credits
 
