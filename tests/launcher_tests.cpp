@@ -210,8 +210,7 @@ void TestRenderer(const fs::path& scratch) {
     CHECK(LauncherSettings(file).Get(kRendererKey, kDefaultRenderer) == "vulkan");
 }
 
-// The Play page no longer offers manual version switching or update removal: installing the highest version and
-// letting it run automatically is the only workflow (launcher.cpp, PagePlay).
+// The Play page has no version selector: the highest installed version runs.
 void TestNoVersionSwitchingUi() {
     const std::string launcher = Read(fs::path(TSR_SOURCE_DIR) / "launcher" / "launcher.cpp");
     CHECK(!launcher.empty());
@@ -220,7 +219,6 @@ void TestNoVersionSwitchingUi() {
     CHECK(launcher.find("RemoveUpdateRows") == std::string::npos);
     CHECK(launcher.find("\"Remove update ") == std::string::npos);
     CHECK(launcher.find("void SelectBuild(") == std::string::npos);
-    // The Play page still offers exactly Install Game, Install Update and Play.
     const size_t play_page = launcher.find("void PagePlay(");
     CHECK(play_page != std::string::npos);
     CHECK(launcher.find("Install game...", play_page) != std::string::npos);
@@ -228,9 +226,7 @@ void TestNoVersionSwitchingUi() {
     CHECK(launcher.find("kUpdateHelp", play_page) != std::string::npos);
 }
 
-// The freeze reported when switching game versions: RefreshPrompts() opened and parsed every prompt archive's CPK
-// table of contents synchronously on the GUI thread. It must run on a worker thread (trg::Task), like installing
-// and patching already did, and be polled every frame.
+// RefreshPrompts() parses CPK tables of contents: it must run on a worker thread and be polled, never block the GUI.
 void TestPromptsRefreshIsAsync() {
     const std::string launcher = Read(fs::path(TSR_SOURCE_DIR) / "launcher" / "launcher.cpp");
     CHECK(!launcher.empty());

@@ -20,5 +20,5 @@
       "link": "https://github.com/saulob"
     }
   ],
-  "notes": "Early development: not yet verified to boot. Supports the USA 1.00 base package (CUSA19610) and, optionally, the USA 1.02 update laid over it. TRG launcher with package installer. No game files are included."
+  "notes": "Version 0.1.0. Supports USA CUSA19610 1.00/1.01/1.02 (primary, most tested), Europe CUSA19620 1.00/1.01, Japan CUSA10602 1.00/1.03/1.04 and Asia CUSA18093 1.00; the non-USA builds install, boot and pass focused compatibility checks but have not been played start to finish. TRG launcher with package installer. No game files are included."
 }

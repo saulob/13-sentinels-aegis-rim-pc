@@ -10,7 +10,7 @@ constexpr PackageLayer kUpdate101Layers[] = {{"01.00", "01.00", false}, {"01.01"
 constexpr PackageLayer kUpdate102Layers[] = {{"01.00", "01.00", false}, {"01.02", "01.00", true}};
 constexpr PackageLayer kEuropeBaseLayers[] = {{"01.00", "01.01", false}};
 constexpr PackageLayer kEuropeUpdate101Layers[] = {{"01.00", "01.01", false}, {"01.01", "01.00", true}};
-// Each Japanese update is laid over the base alone: 1.04 holds everything of 1.03 and no longer opens ROBO_PATCH2.CPK.
+// Each Japanese update is laid over the base alone: 1.04 holds everything of 1.03 and does not open ROBO_PATCH2.CPK.
 constexpr PackageLayer kJapanUpdate103Layers[] = {{"01.00", "01.00", false}, {"01.03", "01.00", true}};
 constexpr PackageLayer kJapanUpdate104Layers[] = {{"01.00", "01.00", false}, {"01.04", "01.00", true}};
 constexpr PackageLayer kAsiaBaseLayers[] = {{"01.00", "01.01", false}};

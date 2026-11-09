@@ -80,8 +80,8 @@ inline bool IsUpdateBuild(const GameBuild& build) {
 const GameBuild* BaseBuildOf(const GameBuild& build, std::span<const GameBuild> builds = SupportedBuilds());
 
 // True when the build's executable has no verified render resolution sites: it then runs only at its native size.
-// The launcher hides and the loader refuses the custom Render resolution and Aspect Ratio for such a build; the unknown
-// build (nullptr) is not restricted here, and the loader refuses to patch it anyway.
+// The launcher hides and the loader refuses a custom Render resolution for such a build; the unknown build (nullptr) is
+// not restricted here, and the loader refuses to patch it anyway.
 bool RestrictedToNativeResolution(const GameBuild* build);
 
 // The build's languages; the first supported build's when the build is not known.

@@ -6,10 +6,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <windows.h>
 
 #include "boot_image.h"
 #include "exit_game.h"
+#include "test_pages.h"
 
 static int checks, failures;
 #define CHECK(condition) do { ++checks; if (!(condition)) { ++failures; printf("FAIL line %d: %s\n", __LINE__, #condition); } } while (0)
@@ -433,7 +433,7 @@ static void check_row_contract(const BootImage *image, const ExitGameSites *site
 /* The image and a stub area within a jump of it, as the loader lays them out. */
 static void check_install(const BootImage *image, const char *build, const ExitGameSites *sites) {
     const size_t stub_size = exit_game_stub_bytes(), image_span = (image->size + 0xffff) & ~(size_t)0xffff;
-    uint8_t *memory = VirtualAlloc(NULL, image_span + stub_size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+    uint8_t *memory = test_pages(image_span + stub_size, 0);
     if (!memory) {
         CHECK(!"no memory for the install check");
         return;
@@ -451,7 +451,7 @@ static void check_install(const BootImage *image, const char *build, const ExitG
     size_t changed = 0;
     for (uint64_t k = 0; k < image->size; ++k) changed += memory[k] != image->bytes[k];
     CHECK(changed <= EXIT_GAME_HOOK_COUNT * 7);
-    VirtualFree(memory, 0, MEM_RELEASE);
+    test_pages_free(memory, image_span + stub_size);
     exit_game_reset();
 }
 
@@ -474,6 +474,7 @@ static void test_real_sites(void) {
     for (int i = 0; i < BUILDS; ++i) {
         BootImage image = {0};
         if (!boot_image_load_build(kBuilds[i].folder, kBuilds[i].work, &image)) {
+            CHECK(!boot_image_required());
             printf("skipped: no %s boot image (build\\image, game\\work or TSR_TEST_IMAGES)\n", kBuilds[i].build);
             continue;
         }

@@ -29,7 +29,7 @@ ServiceEndpoint ResolveEndpoint(std::string_view built_in, std::string_view over
 
 struct ServiceConfig {
     ServiceEndpoint endpoint;
-    PostJson post = PostJsonOverWinHttp;
+    PostJson post = PostJsonOverHttps;
     HttpLimits limits;
     std::function<void(const std::string&)> log; // never receives a receipt or any report text
 };

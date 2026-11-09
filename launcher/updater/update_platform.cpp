@@ -263,6 +263,19 @@ std::filesystem::path CurrentExecutablePath() {
   }
 }
 
+static bool IsTypeTwoAppImage(const std::filesystem::path& file) {
+  unsigned char head[11] = {};
+  std::FILE* stream = std::fopen(file.c_str(), "rb");
+  if (!stream) {
+    return false;
+  }
+  const size_t read = std::fread(head, 1, sizeof(head), stream);
+  std::fclose(stream);
+  return read == sizeof(head) && head[0] == 0x7F && head[1] == 'E' && head[2] == 'L' && head[3] == 'F' &&
+         head[8] == 'A' && head[9] == 'I' && head[10] == 0x02;
+}
+
+// $APPIMAGE as the runtime sets it: the AppImage file, outside the mount or extraction folder ($APPDIR) it runs from.
 bool HasOriginalAppImage(std::filesystem::path& path) {
   const char* value = std::getenv("APPIMAGE");
   if (!value || !*value) {
@@ -270,8 +283,14 @@ bool HasOriginalAppImage(std::filesystem::path& path) {
   }
   std::error_code ec;
   const std::filesystem::path candidate = std::filesystem::weakly_canonical(std::filesystem::path(value), ec);
-  if (ec || !IsRegularFile(candidate)) {
+  if (ec || !IsRegularFile(candidate) || !IsTypeTwoAppImage(candidate)) {
     return false;
+  }
+  if (const char* appdir = std::getenv("APPDIR"); appdir && *appdir) {
+    const std::filesystem::path mount = std::filesystem::weakly_canonical(std::filesystem::path(appdir), ec);
+    if (!ec && PathIsWithin(candidate, mount)) {
+      return false;
+    }
   }
   path = candidate;
   return true;
@@ -345,6 +364,10 @@ bool ApplyAppImageUpdate(const std::filesystem::path& downloaded, const std::fil
   }
   if (downloaded == appimage) {
     error = "The update was downloaded over the installed AppImage.";
+    return false;
+  }
+  if (!IsTypeTwoAppImage(downloaded)) {
+    error = "The downloaded file is not an AppImage.";
     return false;
   }
 

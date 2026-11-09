@@ -3,13 +3,13 @@
   Packages the tested build as dist\13SentinelsAegisRimPC-v<version>-windows-x64 (folder, ZIP and .zip.sha256). Local only:
   nothing is published, tagged or uploaded. It prints the SHA-256 of the ZIP and of each executable in it.
 .DESCRIPTION
-  Builds with tools\build.ps1 (the one RelWithDebInfo configuration) unless -SkipBuild, then stages 13_sentinels_aegis_rim.exe,
-  13_sentinels_launcher.exe and trg-updater.exe without their debug information, the MSYS2 DLLs it loads (found by walking its imports), README.txt, LICENSE.txt and
+  Builds with tools\build.ps1 (the one RelWithDebInfo configuration) unless -SkipBuild, then stages 13_sentinels_aegis_rim.exe
+  (the launcher and the game) and trg-updater.exe without their debug information, the MSYS2 DLLs it loads (found by walking its imports), README.txt, LICENSE.txt and
   the licence texts. The debug information goes to dist\<name>-symbols\, which is not packaged.
   The staging folder is checked for game data, user files, local paths and anything unexpected before the ZIP is
   written. The version is the project VERSION in CMakeLists.txt.
 .PARAMETER SkipBuild
-  Packages the existing build\cmake\clang64\bin\13_sentinels_aegis_rim.exe, 13_sentinels_launcher.exe and trg-updater.exe.
+  Packages the existing build\cmake\clang64\bin\13_sentinels_aegis_rim.exe and trg-updater.exe.
 .PARAMETER Clean
   Passes -Clean to tools\build.ps1.
 .PARAMETER VerifyOnly
@@ -29,7 +29,6 @@ param(
 
 $root = $script:RepoRoot
 $loader = Join-Path $root 'build\cmake\clang64\bin\13_sentinels_aegis_rim.exe'
-$launcherEntry = Join-Path $root 'build\cmake\clang64\bin\13_sentinels_launcher.exe'
 $updater = Join-Path $root 'build\cmake\clang64\bin\trg-updater.exe'
 $tc = Resolve-Toolchain 'auto'
 $bin = $tc.Bin
@@ -56,15 +55,23 @@ $BuiltInLicenses = [ordered]@{
     'miniz'         = 'gpu\third_party\miniz\LICENSE'
     'nanosvg'       = 'launcher\third_party\nanosvg\LICENSE.txt'
     'xbyak'         = 'gpu\third_party\xbyak\COPYRIGHT'
+    'LibAtrac9'     = 'third_party\LibAtrac9\LICENSE'
 }
 # MSYS2 packages compiled in as headers or static libraries; spirv-tools and vulkan-loader only for their licences:
 # ANGLE's libGLESv2.dll links its own copies.
 $StaticPackages = @('fmt', 'boost', 'robin-map', 'vulkan-memory-allocator', 'vulkan-headers', 'compiler-rt',
     'spirv-tools', 'vulkan-loader')
 # The packages whose DLLs may ship, each listed in packaging\licenses\THIRD-PARTY-LICENSES.txt. A DLL from any other
-# package stops the packaging until its licence has been reviewed and added there.
-$DllPackages = @('sdl3', 'freetype', 'libpng', 'zydis', 'xxhash', 'libc++', 'libwinpthread', 'zlib', 'bzip2',
-    'harfbuzz', 'brotli', 'graphite2', 'pcre2', 'glib2', 'gettext-runtime', 'libiconv')
+# package stops the packaging until its licence has been reviewed and added there. Most come with FFmpeg.
+$DllPackages = @('sdl3', 'libpng', 'zydis', 'xxhash', 'libc++', 'libwinpthread', 'libunwind', 'zlib',
+    'ffmpeg', 'aom', 'brotli', 'bzip2', 'cairo', 'dav1d', 'expat', 'fontconfig', 'freetype', 'fribidi', 'gdk-pixbuf2',
+    'gettext-runtime', 'glib2', 'graphite2', 'gsm', 'harfbuzz', 'highway', 'jbigkit', 'lame', 'lcms2', 'lerc',
+    'libdatrie', 'libdeflate', 'libffi', 'libiconv', 'libjpeg-turbo', 'libjxl', 'liblc3', 'libogg', 'librsvg',
+    'libsoxr', 'libthai', 'libtheora', 'libtiff', 'libva', 'libvorbis', 'libvpl', 'libvpx', 'libwebp', 'libx264',
+    'libxml2', 'opencore-amr', 'openjpeg2', 'opus', 'pango', 'pcre2', 'pixman', 'rav1e', 'shaderc', 'speex', 'svt-av1',
+    'x265', 'xvidcore', 'xz', 'zstd', 'zvbi')
+# MSYS2 installs no licence file for these; packaging\licenses\msys2\<package> holds the texts from their source packages.
+$VendoredLicences = Join-Path $root 'packaging\licenses\msys2'
 # ANGLE's own files come from gpu\angle-runtime.txt: SDL loads them by name, so no import table leads to them.
 $AnglePin = Read-AnglePin
 $AngleLicence = 'licenses\angleproject\LICENSE'
@@ -72,10 +79,12 @@ $AngleLicenceSha256 = ($AnglePin.Files | Where-Object { $_.Name -eq 'LICENSE' })
 # The licence folders of what libGLESv2.dll has compiled in.
 $AngleLinkedLicences = @('spirv-tools', 'vulkan-loader', 'VulkanMemoryAllocator', 'xxhash')
 
-$Programs = @('13_sentinels_aegis_rim.exe', '13_sentinels_launcher.exe', 'trg-updater.exe')
-$RootFiles = @('13_sentinels_aegis_rim.exe', '13_sentinels_launcher.exe', 'trg-updater.exe', 'README.txt', 'LICENSE.txt')
+# One program opens the launcher and runs the game; trg-updater.exe replaces it during a self-update.
+$Programs = @('13_sentinels_aegis_rim.exe', 'trg-updater.exe')
+$RootFiles = @('13_sentinels_aegis_rim.exe', 'trg-updater.exe', 'README.txt', 'LICENSE.txt')
+$RetiredPrograms = @('13_sentinels_launcher.exe')
 # The installed updater refuses a later package without these (required_staged_files in launcher\update_config.cpp).
-$UpdaterRequiredFiles = @('13_sentinels_aegis_rim.exe', '13_sentinels_launcher.exe', 'trg-updater.exe', 'SDL3.dll', 'libc++.dll')
+$UpdaterRequiredFiles = @('13_sentinels_aegis_rim.exe', 'trg-updater.exe', 'SDL3.dll', 'libc++.dll')
 $AssetFiles = @('assets\launcher\header-art.png', 'assets\launcher\sponsor-heart.png')
 $ForbiddenNames = @('game', 'user', 'logs', 'cache', 'build', 'prepared', 'extracted', 'image', 'sce_sys', 'sce_module',
     'eboot.bin', 'param.sfo', 'tsr.ini', 'boot.bin', 'content.bin', 'image.json', 'imports.json', 'symbols')
@@ -84,6 +93,24 @@ $ForbiddenPatterns = @('*.pkg', '*.pdb', '*.debug', '*.log', '*.dmp', '*.ini', '
     '*.sav', '*.py', '*.ps1', '*.c', '*.cpp', '*.h')
 # File signatures of PS4 packages, SELF/ELF executables and CRI archives.
 $ForbiddenMagic = @{ '7F434E54' = 'PS4 package'; '4F153D1D' = 'PS4 SELF'; '7F454C46' = 'ELF executable'; '43504B20' = 'CPK archive' }
+
+# Every installed release refuses an update whose ZIP holds a path its IsProtectedRelativePath matches.
+$UpdaterRules = Get-Content -LiteralPath (Join-Path $root 'launcher\updater\update_paths.cpp') -Raw
+function Get-UpdaterList([string]$Name) {
+    if ($UpdaterRules -notmatch "(?s)$Name\[\] = \{(.*?)\};") { Stop-Tool "$Name not found in launcher\updater\update_paths.cpp" }
+    @([regex]::Matches($Matches[1], '"([^"]+)"') | ForEach-Object { $_.Groups[1].Value })
+}
+$ProtectedNames = @(Get-UpdaterList 'kProtectedNames') + @(Get-UpdaterList 'kProtectedFiles')
+$ProtectedExtensions = Get-UpdaterList 'kProtectedExtensions'
+if ($UpdaterRules -notmatch 'kProtectedPrefix = "([^"]+)"') { Stop-Tool 'kProtectedPrefix not found in launcher\updater\update_paths.cpp' }
+$ProtectedPrefix = $Matches[1]
+function Test-UpdaterProtected([string]$Relative) {
+    $segments = $Relative.ToLowerInvariant() -split '\\'
+    foreach ($segment in $segments) {
+        if ($segment.StartsWith($ProtectedPrefix) -or $ProtectedNames -contains $segment) { return $true }
+    }
+    return $ProtectedExtensions -contains [IO.Path]::GetExtension($segments[-1])
+}
 
 $Latin1 = [Text.Encoding]::GetEncoding(28591)
 $LocalText = New-Object System.Collections.Generic.List[string]
@@ -153,11 +180,17 @@ function Test-ReleaseFolder([string]$Dir) {
         foreach ($name in (Get-DllClosure $path $bin $objdump).Keys) {
             if (-not $dlls.Contains($name)) { $problems.Add("missing DLL: $name") }
         }
+        $subsystem = Get-PeSubsystem $path
+        if ($subsystem -ne 2) { $problems.Add("$program is not a Windows GUI program (PE subsystem $subsystem): it would open a console window") }
+    }
+    foreach ($retired in $RetiredPrograms) {
+        if (Test-Path -LiteralPath (Join-Path $base $retired)) { $problems.Add("separate launcher executable: $retired (13_sentinels_aegis_rim.exe opens the launcher)") }
     }
     foreach ($item in Get-ChildItem -LiteralPath $base -Recurse -Force) {
         $relative = $item.FullName.Substring($base.Length + 1)
         $parts = $relative -split '\\'
         if ($ForbiddenNames -contains $item.Name) { $problems.Add("forbidden name: $relative") }
+        if (-not $item.PSIsContainer -and (Test-UpdaterProtected $relative)) { $problems.Add("the updater would refuse a package holding: $relative") }
         # Licence texts have names such as COPYING.LIB; the folder is still checked for programs and content below.
         foreach ($pattern in $ForbiddenPatterns) {
             if ($parts[0] -ne 'licenses' -and $item.Name -like $pattern) { $problems.Add("forbidden file type: $relative") }
@@ -190,7 +223,8 @@ function Test-ReleaseFolder([string]$Dir) {
             }
         }
     }
-    foreach ($leaf in $RootFiles + @('licenses\THIRD-PARTY-LICENSES.txt', 'licenses\MSYS2-PACKAGES.txt', 'licenses\NotoSansTC\LICENSE-NotoSansTC.txt')) {
+    foreach ($leaf in $RootFiles + @('licenses\THIRD-PARTY-LICENSES.txt', 'licenses\MSYS2-PACKAGES.txt', 'licenses\NotoSansTC\LICENSE-NotoSansTC.txt',
+            'licenses\LibAtrac9\LICENSE', 'licenses\ffmpeg\COPYING.GPLv3')) {
         if (-not (Test-Path -LiteralPath (Join-Path $base $leaf) -PathType Leaf)) { $problems.Add("missing: $leaf") }
     }
     foreach ($asset in $AssetFiles) {
@@ -237,7 +271,6 @@ if (-not $SkipBuild) {
     if ($LASTEXITCODE -ne 0) { Stop-Tool 'Build failed' }
 }
 if (-not (Test-Path -LiteralPath $loader)) { Stop-Tool "Missing $loader (run without -SkipBuild)" }
-if (-not (Test-Path -LiteralPath $launcherEntry)) { Stop-Tool "Missing $launcherEntry (run without -SkipBuild)" }
 if (-not (Test-Path -LiteralPath $updater)) { Stop-Tool "Missing $updater (run without -SkipBuild)" }
 $built = (Get-Item -LiteralPath $loader).VersionInfo.ProductVersion
 if ($built -ne $version) { Stop-Tool "13_sentinels_aegis_rim.exe is version $built, CMakeLists.txt says $version (run without -SkipBuild)" }
@@ -256,13 +289,6 @@ if ($LASTEXITCODE -ne 0) { Stop-Tool 'llvm-objcopy --only-keep-debug failed' }
 & $objcopy --strip-debug "--add-gnu-debuglink=$debugFile" $loader (Join-Path $stage '13_sentinels_aegis_rim.exe')
 if ($LASTEXITCODE -ne 0) { Stop-Tool 'llvm-objcopy --strip-debug failed' }
 
-Write-Step 'Staging 13_sentinels_launcher.exe without debug information'
-$launcherDebug = Join-Path $symbols '13_sentinels_launcher.debug'
-& $objcopy --only-keep-debug $launcherEntry $launcherDebug
-if ($LASTEXITCODE -ne 0) { Stop-Tool 'llvm-objcopy --only-keep-debug failed on 13_sentinels_launcher.exe' }
-& $objcopy --strip-debug "--add-gnu-debuglink=$launcherDebug" $launcherEntry (Join-Path $stage '13_sentinels_launcher.exe')
-if ($LASTEXITCODE -ne 0) { Stop-Tool 'llvm-objcopy --strip-debug failed on 13_sentinels_launcher.exe' }
-
 Write-Step 'Staging trg-updater.exe without debug information'
 $updaterDebug = Join-Path $symbols 'trg-updater.debug'
 & $objcopy --only-keep-debug $updater $updaterDebug
@@ -273,10 +299,8 @@ if ($LASTEXITCODE -ne 0) { Stop-Tool 'llvm-objcopy --strip-debug failed on trg-u
 Write-Step 'Staging the DLLs it loads'
 $angleRuntime = Sync-AngleRuntime $bin
 $dlls = Get-DllClosure $loader $bin $objdump
-foreach ($built in @($launcherEntry, $updater)) {
-    $programDlls = Get-DllClosure $built $bin $objdump
-    foreach ($dllName in $programDlls.Keys) { if (-not $dlls.Contains($dllName)) { $dlls[$dllName] = $programDlls[$dllName] } }
-}
+$updaterDlls = Get-DllClosure $updater $bin $objdump
+foreach ($dllName in $updaterDlls.Keys) { if (-not $dlls.Contains($dllName)) { $dlls[$dllName] = $updaterDlls[$dllName] } }
 Add-AngleDlls $dlls $angleRuntime $bin
 $owners = [ordered]@{}
 foreach ($dll in $dlls.Values) {
@@ -305,7 +329,13 @@ $manifest = New-Object System.Collections.Generic.List[string]
 $manifest.Add("MSYS2 CLANG64 packages in 13_sentinels_aegis_rim.exe $version and next to it. Source packages: the URL on each line.")
 foreach ($short in @($owners.Keys) + $StaticPackages) {
     $info = Get-PackageInfo $short
-    if ($info.Licenses.Count -eq 0) { Stop-Tool "MSYS2 package $short installs no licence file" }
+    if ($info.Licenses.Count -eq 0) {
+        $vendored = Join-Path $VendoredLicences $short
+        if (-not (Get-ChildItem -LiteralPath $vendored -File -ErrorAction SilentlyContinue)) {
+            Stop-Tool "MSYS2 package $short installs no licence file and packaging\licenses\msys2\$short has none"
+        }
+        Copy-Item -LiteralPath $vendored (Join-Path $licenses $short) -Recurse
+    }
     foreach ($file in $info.Licenses) {
         $relative = $file.Substring($file.IndexOf('/share/licenses/') + '/share/licenses/'.Length).Replace('/', '\')
         $target = Join-Path $licenses $relative
@@ -373,10 +403,10 @@ Write-Host 'RELEASE PACKAGE READY (nothing was published)' -ForegroundColor Gree
 Write-Host "  Folder:   $stage ($(Format-Size $stageBytes), $($files.Count) files)"
 Write-Host "  ZIP:      $zip ($(Format-Size (Get-Item -LiteralPath $zip).Length))"
 Write-Host "  Windows ZIP SHA-256:                $hash"
-foreach ($program in @('13_sentinels_aegis_rim.exe', '13_sentinels_launcher.exe', 'trg-updater.exe')) {
+foreach ($program in @('13_sentinels_aegis_rim.exe', 'trg-updater.exe')) {
     Write-Host ("  {0} SHA-256: {1}" -f $program.PadRight(28), (Get-FileHash -LiteralPath (Join-Path $stage $program) -Algorithm SHA256).Hash.ToLowerInvariant())
 }
-Write-Host '  VirusTotal: scan the ZIP and the three executables separately (docs\RELEASE_SECURITY.md); uploads are manual'
+Write-Host '  VirusTotal: scan the ZIP and both executables separately (docs\RELEASE_SECURITY.md); uploads are manual'
 Write-Host "  Symbols:  $symbols (not in the package)"
 Write-Host "  Loader:   $(Format-Size (Get-Item -LiteralPath $loader).Length) built, $(Format-Size (Get-Item -LiteralPath (Join-Path $stage '13_sentinels_aegis_rim.exe')).Length) packaged"
 Write-Host "  DLLs:     $($dlls.Count), $(Format-Size $dllBytes)"

@@ -13,6 +13,9 @@ namespace tsr::json {
 // `text` as a JSON string literal, quotes included. Invalid UTF-8 and control characters are escaped, never passed on.
 std::string Quote(std::string_view text);
 
+// An object member. Not a std::pair: libstdc++ cannot instantiate a pair holding the still incomplete Value.
+struct Member;
+
 class Value {
 public:
     enum class Kind { kNull, kBool, kNumber, kString, kArray, kObject };
@@ -22,7 +25,7 @@ public:
     int64_t number = 0;
     std::string string;
     std::vector<Value> array;
-    std::vector<std::pair<std::string, Value>> object;
+    std::vector<Member> object;
 
     bool IsObject() const { return kind == Kind::kObject; }
     bool IsArray() const { return kind == Kind::kArray; }
@@ -35,6 +38,11 @@ public:
     std::string StringOr(std::string_view key) const;
     int64_t NumberOr(std::string_view key) const;
     bool BoolOr(std::string_view key) const;
+};
+
+struct Member {
+    std::string first;
+    Value second;
 };
 
 // nullopt for anything that is not exactly one JSON value; nesting is limited and fractions are refused.

@@ -136,11 +136,12 @@ constexpr char kAntiAliasingHelp[] =
 constexpr char kAnisotropyHelp[] =
     "Sharper textures on floors and walls seen at an angle. Game uses the game's own filtering.";
 constexpr char kTextLanguageHelp[] = "Language of the game's menus and subtitles, independent of Voice Language.";
-constexpr char kShowFpsTitleHelp[] = "Shows the frame rate in the window title: 13 Sentinels: Aegis Rim | FPS: 60.00";
+constexpr char kShowFpsTitleHelp[] =
+    "Shows the frame rate in the window title: 13 Sentinels: Aegis Rim | CUSA19610 1.00 | FPS: 60.00";
 constexpr char kShowResolutionTitleHelp[] =
-    "Shows the game's render resolution in the window title: 13 Sentinels: Aegis Rim | 1920x1080";
+    "Shows the game's render resolution in the window title: 13 Sentinels: Aegis Rim | CUSA19610 1.00 | 1920x1080";
 constexpr char kFrameCounterHelp[] = "Shows the frame rate and frame time in a corner of the game.";
-constexpr char kVoicesJapaneseOnlyHelp[] = "Only Japanese voices are available in version 1.00";
+constexpr char kVoicesJapaneseOnlyHelp[] = "Only Japanese voices are available in this version.";
 constexpr char kVoicesGameSettingsHelp[] =
     "English and Japanese voices are available. Change Audio Language in the game's settings";
 constexpr char kVoicesMissingHelp[] =
@@ -153,8 +154,8 @@ constexpr char kControllerIconsHelp[] =
     "The buttons the game's prompts show. Xbox repaints the face buttons (A, B, X, Y) and the Menu and View labels in the "
     "installed game archives (reversible; a few seconds, longer the first time if game versions share their files).";
 constexpr char kUpdateHelp[] =
-    "Updates are optional: the base game plays on its own. Version 1.02 can be installed directly over the base; "
-    "installing 1.01 first is not required. A successfully installed update is activated automatically, and the "
+    "Updates are optional: the base game plays on its own. An update of the installed region goes directly over its "
+    "base; earlier updates are not required. A successfully installed update is activated automatically, and the "
     "highest installed version always plays, so an older update is never installed over a newer one by mistake.";
 constexpr char kAllowOverlayProgramsHelp[] =
     "For programs that draw over games (recording, chat, store and performance overlays). On, PLAY starts the game as a "
@@ -1069,9 +1070,11 @@ private:
     }
 
     static std::string LanguageName(std::string_view key) {
-        for (const TextLanguage& language : TextLanguagesOf(nullptr)) {
-            if (language.key == key) {
-                return std::string(language.name);
+        for (const GameBuild& build : SupportedBuilds()) {
+            for (const TextLanguage& language : TextLanguagesOf(&build)) {
+                if (language.key == key) {
+                    return std::string(language.name);
+                }
             }
         }
         return std::string(key);
@@ -1328,7 +1331,7 @@ private:
             "like to support its continued development, you can sponsor my work on GitHub.",
             "Support is completely optional and helps support ongoing improvements and future projects.");
         ui.Paragraph("13 Sentinels: Aegis Rim for PlayStation 4, running on this PC through a native runtime. No game files "
-                     "are included; the game runs from the user's own copy. This port is in early development.");
+                     "are included; the game runs from the user's own copy.");
         ui.Spacer(4);
         std::error_code ec;
         if (std::filesystem::is_directory(paths_.app0, ec)) {

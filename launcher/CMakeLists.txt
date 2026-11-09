@@ -10,7 +10,11 @@ set(IMGUI_DIR ${PROJECT_SOURCE_DIR}/gpu/third_party/imgui)
 add_library(trg_core STATIC ${TRG_DIR}/src/settings.cpp ${TRG_DIR}/src/platform.cpp ${TRG_DIR}/src/download.cpp)
 target_include_directories(trg_core PUBLIC ${TRG_DIR}/include)
 target_compile_definitions(trg_core PRIVATE _CRT_SECURE_NO_WARNINGS)
-target_link_libraries(trg_core PRIVATE shell32 ole32 comdlg32 winhttp)
+if (WIN32)
+    target_link_libraries(trg_core PRIVATE shell32 ole32 comdlg32 winhttp)
+else()
+    target_link_libraries(trg_core PRIVATE Threads::Threads)
+endif()
 
 # The launcher draws with the Dear ImGui compiled into the video core library.
 add_library(trg_launcher STATIC ${TRG_DIR}/src/launcher.cpp ${TRG_DIR}/src/headers.cpp)
@@ -32,15 +36,23 @@ add_library(tsr_launcher_core STATIC boot_image.cpp build_diagnostics.cpp contro
     file_browser.cpp game_files.cpp game_install.cpp
     game_process.cpp game_profile.cpp header_art.cpp http_post.cpp incident_client.cpp incident_report.cpp json_lite.cpp
     log_scrubber.cpp options.cpp page_icons.cpp paths.cpp pkg_extract.cpp report_history.cpp resolution.c settings.cpp
-    trophy_content.cpp crypto_win.cpp
+    trophy_content.cpp
     ${PROJECT_SOURCE_DIR}/src/trophies/trophy_data.cpp ${PROJECT_SOURCE_DIR}/src/trophies/trophy_key.cpp
     ${PROJECT_SOURCE_DIR}/src/trophies/trophy_pack.cpp ${PROJECT_SOURCE_DIR}/src/trophies/trophy_runtime.cpp
     ${PROJECT_SOURCE_DIR}/src/trophies/trophy_service.cpp ${PROJECT_SOURCE_DIR}/src/trophies/trophy_store.cpp
     ${PROJECT_SOURCE_DIR}/src/trophies/trophy_view.cpp ${PROJECT_SOURCE_DIR}/src/trophies/trp_archive.cpp)
 target_include_directories(tsr_launcher_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR} ${PROJECT_SOURCE_DIR}/src)
 target_compile_definitions(tsr_launcher_core PRIVATE TSR_PORT_VERSION="${PROJECT_VERSION}")
-target_link_libraries(tsr_launcher_core PUBLIC trg_core SDL3::SDL3 tsr_keys tsr_startup_phase PRIVATE ZLIB::ZLIB bcrypt winhttp)
-set(TSR_LOG_SOURCES ${PROJECT_SOURCE_DIR}/src/runtime_log.c ${PROJECT_SOURCE_DIR}/src/runtime_session_log.c)
+target_link_libraries(tsr_launcher_core PUBLIC trg_core SDL3::SDL3 tsr_keys tsr_startup_phase PRIVATE ZLIB::ZLIB)
+# Hashes and ciphers, and the Bug Report's HTTPS: CNG and WinHTTP on Windows, OpenSSL elsewhere.
+if (WIN32)
+    target_sources(tsr_launcher_core PRIVATE crypto_win.cpp)
+    target_link_libraries(tsr_launcher_core PRIVATE bcrypt winhttp)
+else()
+    find_package(OpenSSL REQUIRED COMPONENTS SSL Crypto)
+    target_sources(tsr_launcher_core PRIVATE crypto_openssl.cpp)
+    target_link_libraries(tsr_launcher_core PRIVATE OpenSSL::SSL OpenSSL::Crypto Threads::Threads)
+endif()
 
 # The sidebar's page icons (assets/launcher/icons/*.svg) as a table of byte arrays, page_icons.cpp.
 file(GLOB TSR_PAGE_ICONS CONFIGURE_DEPENDS ${PROJECT_SOURCE_DIR}/assets/launcher/icons/*.svg)
@@ -117,7 +129,7 @@ add_executable(tsr-update-tests EXCLUDE_FROM_ALL ../tests/update_tests.cpp updat
 target_include_directories(tsr-update-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_definitions(tsr-update-tests PRIVATE TSR_SOURCE_DIR="${PROJECT_SOURCE_DIR}"
     TSR_UPDATER_SRC_DIR="${CMAKE_CURRENT_SOURCE_DIR}" TSR_PORT_VERSION="${PROJECT_VERSION}")
-target_link_libraries(tsr-update-tests PRIVATE trg_core shell32)
+target_link_libraries(tsr-update-tests PRIVATE trg_core $<$<BOOL:${WIN32}>:shell32>)
 set_target_properties(tsr-update-tests PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
 target_compile_options(tsr-update-tests PRIVATE -Wall -Wextra)
 
@@ -127,7 +139,7 @@ add_executable(tsr-update-network-tests EXCLUDE_FROM_ALL ../tests/update_network
     updater/update_controller.cpp updater/update_job.cpp updater/update_paths.cpp updater/update_platform.cpp
     updater/update_zip.cpp updater/version.cpp updater/third_party/miniz/miniz.c)
 target_include_directories(tsr-update-network-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(tsr-update-network-tests PRIVATE trg_core shell32 ws2_32)
+target_link_libraries(tsr-update-network-tests PRIVATE trg_core $<$<BOOL:${WIN32}>:shell32 ws2_32>)
 set_target_properties(tsr-update-network-tests PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
 target_compile_options(tsr-update-network-tests PRIVATE -Wall -Wextra)
 

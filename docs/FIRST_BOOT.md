@@ -1,7 +1,6 @@
 # First boot: what is known statically
 
-Everything here was read from the user's own packages without running game code. It says what the loader can
-handle, not that the game runs.
+What the supported packages and executables contain, read from the packages themselves.
 
 ## Packages
 
@@ -46,7 +45,8 @@ data at `0xe00000`, no main-module TLS. The entry is `0x404cc0` in 1.00 and `0x3
 `_init_env` is a bare RET in both, which the runtime's replacement relies on.
 
 Middleware seen in the executable's strings: CRIWARE ADX2 (Atom, HCA-MX and an AT9 codec plugin, so ATRAC9 through
-`libSceAjm`) and Sofdec/Mana (H.264 through `libSceVideodec2`). No Neo mode and no AvPlayer.
+`libSceAjm`) and Sofdec/Mana (H.264 through `libSceVideodec2`). No AvPlayer. The executable asks `sceKernelIsNeoMode`
+to choose between its 1080p and PS4 Pro render sizes.
 
 ## Import coverage
 
@@ -77,10 +77,3 @@ offers, gallery, menu buttons, NPC voices, exit-game row, title layout, LZCNT re
 renderer workarounds, the controller prompt and translation patches, online play, cheats and Discord presence. The
 self-updater is carried over for this repository's releases (docs\RELEASE_SECURITY.md). The LZCNT rewrite itself is carried over with sites of its own for every supported executable, used on a
 processor without LZCNT (Intel Sandy Bridge, Ivy Bridge); `TSR_EMULATE_LZCNT=1` forces it on one that has LZCNT.
-
-## Unknown until the first boot
-
-Whether startup reaches the game's entry, the first call the runtime cannot answer, the renderer's behaviour with this
-game's shaders, the language selection (the five archives are present, but the executable's mapping of the system
-language is not verified), and frame pacing. Render resolution and aspect ratio stay native until sites are verified
-in this executable.

@@ -61,12 +61,11 @@ $frames = [BitConverter]::ToUInt16($ico, 4)
 $sizes = @(0..($frames - 1) | ForEach-Object { $w = $ico[6 + 16 * $_]; if ($w -eq 0) { 256 } else { [int]$w } })
 Check (($sizes -join ',') -eq '16,24,32,48,64,128,256') "app-icon.ico frames are $($sizes -join ',')"
 
-foreach ($rc in 'src\13_sentinels_aegis_rim.rc', 'src\13_sentinels_launcher.rc') {
-    Check ((Read-Source $rc) -match '(?m)^1 ICON "\.\./packaging/icons/app-icon\.ico"') "$rc references app-icon.ico"
-}
+Check ((Read-Source 'src\13_sentinels_aegis_rim.rc') -match '(?m)^1 ICON "\.\./packaging/icons/app-icon\.ico"') 'src\13_sentinels_aegis_rim.rc references app-icon.ico'
+$resources = @(Get-ChildItem -LiteralPath (Join-Root 'src') -Filter '*.rc' | ForEach-Object { $_.Name })
+Check (($resources -join ',') -eq '13_sentinels_aegis_rim.rc') "the one program has the one resource file (found $($resources -join ', '))"
 $cmake = Read-Source 'CMakeLists.txt'
-Check ($cmake -match 'src/13_sentinels_aegis_rim\.rc PROPERTIES OBJECT_DEPENDS\s+"[^"]*packaging/icons/app-icon\.ico') 'the game resource relinks when app-icon.ico changes'
-Check ($cmake -match 'src/13_sentinels_launcher\.rc PROPERTIES OBJECT_DEPENDS "[^"]*packaging/icons/app-icon\.ico') 'the launcher resource relinks when app-icon.ico changes'
+Check ($cmake -match 'src/13_sentinels_aegis_rim\.rc PROPERTIES OBJECT_DEPENDS\s+"[^"]*packaging/icons/app-icon\.ico') 'the program resource relinks when app-icon.ico changes'
 
 $licenses = Read-Source 'packaging\licenses\THIRD-PARTY-LICENSES.txt'
 Check ($licenses -match 'Application icon: Game Console Ecommerce') 'the icon license entry exists'

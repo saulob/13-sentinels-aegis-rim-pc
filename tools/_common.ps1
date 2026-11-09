@@ -95,6 +95,17 @@ function Resolve-Toolchain([string]$Requested) {
 # Provided by the graphics driver.
 $script:SystemProvidedDlls = @('vulkan-1.dll')
 
+# The PE optional header's Subsystem: 2 is a Windows GUI program (no console window), 3 a console program; -1 not a PE.
+function Get-PeSubsystem([string]$Path) {
+    $header = New-Object byte[] 4096
+    $stream = [IO.File]::OpenRead($Path)
+    try { $read = $stream.Read($header, 0, $header.Length) } finally { $stream.Dispose() }
+    if ($read -lt 0x40 -or $header[0] -ne 0x4D -or $header[1] -ne 0x5A) { return -1 }
+    $pe = [BitConverter]::ToInt32($header, 0x3C)
+    if ($pe -lt 0x40 -or $pe + 0x5E -gt $read -or [BitConverter]::ToUInt32($header, $pe) -ne 0x4550) { return -1 }
+    return [int][BitConverter]::ToUInt16($header, $pe + 0x5C)
+}
+
 function Get-Imports([string]$Path, [string]$Objdump) {
     $out = & $Objdump -p $Path
     if ($LASTEXITCODE -ne 0) { Stop-Tool "llvm-objdump failed on $Path" }

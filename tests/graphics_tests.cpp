@@ -64,14 +64,12 @@ uint32_t Imm(const std::vector<unsigned char>& image, size_t at) {
     return value;
 }
 
-// The game image the loader runs: the tail of boot.bin, image_bytes long (image.json); build\image, else the build's
-// folder under TSR_TEST_IMAGES.
+// The game image the loader runs: the tail of boot.bin, image_bytes long (image.json); the build's folder under
+// TSR_TEST_IMAGES when set, else build\image.
 std::vector<unsigned char> GameImage(const GameBuild& build) {
-    fs::path folder = fs::path(TSR_SOURCE_DIR) / "build" / "image" / build.folder;
     const char* extra = std::getenv("TSR_TEST_IMAGES");
-    if (!fs::exists(folder / "boot.bin") && extra && *extra) {
-        folder = fs::path(extra) / build.folder;
-    }
+    const fs::path folder = extra && *extra ? fs::path(extra) / build.folder
+                                            : fs::path(TSR_SOURCE_DIR) / "build" / "image" / build.folder;
     const std::string meta = ReadText(folder / "image.json");
     const size_t key = meta.find("\"image_bytes\":");
     if (key == std::string::npos) {
@@ -145,6 +143,8 @@ void TestRealImages() {
     for (const GameBuild& build : SupportedBuilds()) {
         std::vector<unsigned char> image = GameImage(build);
         if (image.empty()) {
+            const char* required = std::getenv("TSR_TEST_IMAGES");
+            CHECK(!required || !*required);
             std::printf("skipped: real boot image %s is not prepared (build\\image\\%s)\n", build.label, build.folder);
             continue;
         }
@@ -300,7 +300,7 @@ void TestLoaderFallback() {
     CHECK(loader.find("Render resolution: requested %s (%dx%d), effective %s, main render target %dx%d") !=
           std::string::npos);
     CHECK(loader.find("tsr_render_target") == std::string::npos);
-    // The 12 size sites are the only render-size code change; the 0.5 Pro scale A/B showed no visible effect.
+    // The 12 size sites are the only render-size code change.
     CHECK(loader.find("apply_pro_scale") == std::string::npos);
     CHECK(loader.find("TSR_DEBUG_PRO_SCALE") == std::string::npos);
     CHECK(loader.find("allocate(round_page(size) + hook_bytes);") != std::string::npos);

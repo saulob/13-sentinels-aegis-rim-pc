@@ -22,6 +22,7 @@
 #define ERR_PARAMETER ((int32_t)0x809F0000)
 #define ERR_NOT_INITIALIZED ((int32_t)0x809F0001)
 #define ERR_NOT_MOUNTED ((int32_t)0x809F0004)
+#define ERR_NO_PERMISSION ((int32_t)0x809F0005)
 #define ERR_EXISTS ((int32_t)0x809F0007)
 #define ERR_NOT_FOUND ((int32_t)0x809F0008)
 #define ERR_INTERNAL ((int32_t)0x809F000B)
@@ -67,7 +68,7 @@ _Static_assert(sizeof(SearchCond)==64 && sizeof(SearchResult)==56,"dir name sear
 static pthread_mutex_t lock=PTHREAD_MUTEX_INITIALIZER;
 static int initialized;
 static char title_id[16]="UNKNOWN";
-static struct { int used; char host[700], meta[700]; uint64_t blocks; } slots[SLOTS];
+static struct { int used, read_only; char host[700], meta[700]; uint64_t blocks; } slots[SLOTS];
 static char memory_path[720];
 static uint64_t memory_size;
 static size_t mounts_done, unmounts_done, memory_writes;
@@ -131,7 +132,6 @@ int runtime_savedata_icon(int32_t user, const char *dir, char *out, size_t size)
     snprintf(out,size,"%s/%s.sce_sys/icon0.png",base,dir);
     return 0;
 }
-/* DEBUG_SAULO: save-loading freeze diagnostics; failures only, successes are logged where rare. */
 static int32_t traced(const char *operation,const char *subject,int32_t result) {
     if (result) printf("Runtime: %s(%s) -> 0x%08x\n",operation,subject ? subject : "",(uint32_t)result);
     return result;
@@ -164,6 +164,7 @@ static int32_t mount(int32_t user, const char *title, const DirName *dir, uint64
     if (!exists && (make_dirs(host) || make_dirs(meta))) { pthread_mutex_unlock(&lock); return ERR_INTERNAL; }
     if (!exists) { Param empty={0}; write_param(meta,&empty); }
     slots[slot].used=1;
+    slots[slot].read_only=0;
     slots[slot].blocks=blocks;
     snprintf(slots[slot].host,sizeof(slots[slot].host),"%s",host);
     snprintf(slots[slot].meta,sizeof(slots[slot].meta),"%s",meta);
@@ -203,7 +204,12 @@ static ABI int32_t save_transferring_mount(const TransferringMount *m, MountResu
     if (!valid_name(title,sizeof(title))) return traced("sceSaveDataTransferringMount","bad title",ERR_PARAMETER);
     const int32_t status=mount(m->user,title,m->dir,0,MODE_RDONLY,result);
     const int slot=status ? -1 : slot_of(&result->point);
-    if (slot>=0) runtime_file_mount_read_only(result->point.data,slots[slot].host);
+    if (slot>=0) {
+        pthread_mutex_lock(&lock);
+        slots[slot].read_only=1;
+        pthread_mutex_unlock(&lock);
+        runtime_file_mount_read_only(result->point.data,slots[slot].host);
+    }
     return traced("sceSaveDataTransferringMount",m->dir ? m->dir->data : "null",status);
 }
 static int32_t umount(const MountPoint *point) {
@@ -212,7 +218,6 @@ static int32_t umount(const MountPoint *point) {
     int slot=slot_of(point);
     if (slot>=0) { runtime_file_unmount(point->data); slots[slot].used=0; ++unmounts_done; }
     pthread_mutex_unlock(&lock);
-    if (slot>=0) printf("Runtime: save data unmounted from %s\n",point->data); /* DEBUG_SAULO */
     return slot>=0 ? 0 : ERR_NOT_FOUND;
 }
 static ABI int32_t save_umount(const MountPoint *point) { return traced("sceSaveDataUmount",point_name(point),umount(point)); }
@@ -250,6 +255,7 @@ static int32_t set_param(const MountPoint *point, uint32_t type, const void *buf
     pthread_mutex_lock(&lock);
     int slot=slot_of(point);
     if (slot<0) { pthread_mutex_unlock(&lock); return ERR_NOT_MOUNTED; }
+    if (slots[slot].read_only) { pthread_mutex_unlock(&lock); return ERR_NO_PERMISSION; }
     Param p; read_param(slots[slot].meta,&p);
     switch (type) {
     case 0: if (size<sizeof(Param)) goto bad; memcpy(&p,buffer,sizeof(p)); break;     /* ALL */
@@ -274,8 +280,8 @@ static int32_t icon_save(const MountPoint *point, const Icon *icon) {
     if (!icon || !icon->buffer) return ERR_PARAMETER;
     pthread_mutex_lock(&lock);
     int slot=slot_of(point);
-    int32_t r=ERR_NOT_MOUNTED;
-    if (slot>=0) {
+    int32_t r=slot>=0 && slots[slot].read_only ? ERR_NO_PERMISSION : ERR_NOT_MOUNTED;
+    if (slot>=0 && !slots[slot].read_only) {
         char path[700]; snprintf(path,sizeof(path),"%s/icon0.png",slots[slot].meta);
         FILE *f=fopen(path,"wb");
         r=f && fwrite(icon->buffer,1,icon->data_size,f)==icon->data_size ? 0 : ERR_INTERNAL;
@@ -352,9 +358,7 @@ static int32_t search(const SearchCond *cond, SearchResult *result) {
 }
 static ABI int32_t save_search(const SearchCond *cond, SearchResult *result) {
     const char *pattern=cond && cond->dir && cond->dir->data[0] ? cond->dir->data : "*";
-    int32_t r=traced("sceSaveDataDirNameSearch",pattern,search(cond,result));
-    if (!r) printf("Runtime: save data search '%s': %u found, %u returned\n",pattern,result->hits,result->set_count); /* DEBUG_SAULO */
-    return r;
+    return traced("sceSaveDataDirNameSearch",pattern,search(cond,result));
 }
 /* SaveDataMemory: one fixed-size blob per user/title. */
 static ABI int32_t memory_setup(int32_t user, uint64_t size, const Param *param) {

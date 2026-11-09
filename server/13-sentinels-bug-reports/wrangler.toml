@@ -11,7 +11,7 @@ class_name = "BugReportDesk"
 tag = "v1"
 new_sqlite_classes = ["BugReportDesk"]
 
-# Edge limit per connection address, before the Durable Object is woken. namespace_id must be unique in the Cloudflare account (the SF2 lobby uses 2002).
+# Edge limit per connection address, before the Durable Object is woken. namespace_id must be unique in the Cloudflare account.
 [[ratelimits]]
 name = "REPORT_LIMITER"
 namespace_id = "1301"

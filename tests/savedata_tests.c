@@ -380,7 +380,6 @@ static void test_game_paths_read_only(void) {
     CHECK(api.open("/savedata0/../escape", GUEST_RDONLY, 0) < 0);
 }
 
-/* The user's save, copied: mounted read-only, opened and read the way the game loads it. */
 /* The prologue demo's save, offered by the Japanese and Asian games: found and read-only when present, else not found. */
 static void test_transferring_mount(void) {
     typedef int32_t (ABI *TransferFn)(const TransferringMount *, MountResult *);
@@ -405,6 +404,15 @@ static void test_transferring_mount(void) {
     CHECK(fd >= 3 && api.read((int)fd, back, 4) == 4 && !memcmp(back, "demo", 4));
     if (fd >= 3) api.close((int)fd);
     CHECK(api.open(guest, GUEST_WRONLY | GUEST_TRUNC, 0) < 0);
+    const uint32_t user_param = 7;
+    CHECK(api.set_param(&r.point, 4, &user_param, sizeof(user_param)) == ERR_NO_PERMISSION);
+    typedef int32_t (ABI *IconFn)(const MountPoint *, const Icon *);
+    const IconFn save_icon = (IconFn)save_export("sceSaveDataSaveIcon");
+    Icon icon; memset(&icon, 0, sizeof(icon)); icon.buffer = "png"; icon.buffer_size = icon.data_size = 3;
+    CHECK(save_icon(&r.point, &icon) == ERR_NO_PERMISSION);
+    char demo_meta[960];
+    snprintf(demo_meta, sizeof(demo_meta), "%s.sce_sys", demo_dir);
+    CHECK(!exists(demo_meta));
     CHECK(api.umount(&r.point) == 0);
     CHECK(exists(demo_file) && host_size(demo_file) == 4);
     m.title = NULL;
@@ -415,6 +423,7 @@ static void test_transferring_mount(void) {
     CHECK(transfer(NULL, &r) == ERR_PARAMETER);
 }
 
+/* The user's save, copied: mounted read-only, opened and read the way the game loads it. */
 static void test_user_save_copy(const char *repo) {
     char original[1100], original_meta[1100];
     snprintf(original, sizeof(original), "%s/user/savedata/1/CUSA19610/SAVEDATA00/ROBO13.DAT", repo);

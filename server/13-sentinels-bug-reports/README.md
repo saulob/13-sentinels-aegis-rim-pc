@@ -4,7 +4,7 @@ A Cloudflare Worker with one SQLite-backed Durable Object. Players' launchers fi
 them, in the private dashboard at `/admin`. It is independent of every other project's service: its own Worker, its own
 Durable Object and database, its own secret, no player identities.
 
-Nothing here has been deployed by the repository's tooling. The steps below are for you to run.
+Nothing in the repository's tooling deploys it. The steps below are run by hand.
 
 ## What it is
 
@@ -42,13 +42,12 @@ node --test "test/*.test.js"          # Node 22 or newer; an in-memory database
 
 ## Deploy (manual; nothing in this repository deploys)
 
-Production address: `https://13-sentinels-bug-reports.saulobenigno.workers.dev` (the same `saulobenigno.workers.dev`
-account subdomain as the SF2 lobby). The launcher already points at it (`kBugReportServiceUrl` in
+Production address: `https://13-sentinels-bug-reports.saulobenigno.workers.dev`. The launcher already points at it (`kBugReportServiceUrl` in
 `launcher/game_profile.h`). SQLite-backed Durable Objects are offered on Cloudflare's free and paid Workers plans; check
 Cloudflare's current limits for yours.
 
 ```powershell
-cd S:\VisualStudio\repos\13-sentinels-aegis-rim-pc\server\13-sentinels-bug-reports
+cd server\13-sentinels-bug-reports
 npx wrangler whoami                       # must be the account that owns saulobenigno.workers.dev
 
 # a random 64-character token; copy it into your password manager
@@ -65,7 +64,7 @@ If `secret put` says the Worker does not exist yet, run `npx wrangler deploy` fi
 exists `/admin` answers `503 not_configured`. The token needs 24 or more characters.
 
 `wrangler.toml` creates the Durable Object class `BugReportDesk` (migration `v1`, SQLite) and the rate-limit binding
-`REPORT_LIMITER`. Its `namespace_id` (`1301`) must be unique in the Cloudflare account; the SF2 lobby uses `2002`. If the
+`REPORT_LIMITER`. Its `namespace_id` (`1301`) must be unique in the Cloudflare account. If the
 deploy fails with a namespace conflict, change `1301` to another unused number (for example `1302`) and deploy again; keep
 the block, it is the edge abuse limit. Do not edit an applied migration.
 

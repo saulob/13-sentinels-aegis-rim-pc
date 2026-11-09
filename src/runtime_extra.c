@@ -1,6 +1,7 @@
 /* Imports the shared runtime files do not own, with the offline, single-user contracts of runtime_services.c.
  * The libc start-up and service contracts follow Catherine: Full Body PC and MediEvil PC (runtime_extra.c). */
 #include "runtime.h"
+#include <errno.h>
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
@@ -16,9 +17,15 @@ static ABI void *null_pointer(void) { return NULL; }
 static ABI int32_t not_found(void) { return ERR(E_SRCH); }
 
 /* ---- libc.prx start-up (SDK 7.00 and 9.50): thread-exit and sanitizer hooks the runtime does not need ---- */
-static ABI int32_t kernel_nanosleep(const struct timespec *request, struct timespec *remain) {
+typedef struct { int64_t tv_sec, tv_nsec; } GuestTimespec;
+static ABI int32_t kernel_nanosleep(const GuestTimespec *request, GuestTimespec *remain) {
     if (!request) return ERR(E_INVAL);
+#ifdef _WIN32
     compat_sleep_ns((uint64_t)request->tv_sec*1000000000u+(uint64_t)request->tv_nsec);
+#else
+    struct timespec t={(time_t)request->tv_sec,(long)request->tv_nsec};
+    while (nanosleep(&t,&t) && errno==EINTR) {}
+#endif
     if (remain) remain->tv_sec=remain->tv_nsec=0;
     return 0;
 }

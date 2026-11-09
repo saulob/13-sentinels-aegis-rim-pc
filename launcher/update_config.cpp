@@ -91,15 +91,29 @@ trg::update::UpdateConfig MakeUpdateConfig(const std::filesystem::path& install_
     };
     config.restart_executable = install_dir / "13_sentinels_aegis_rim.exe";
     // Every later package must keep these, or the installed updater refuses it.
-    config.required_staged_files = {"13_sentinels_aegis_rim.exe", "13_sentinels_launcher.exe", "trg-updater.exe",
-                                    "SDL3.dll", "libc++.dll"};
+    config.required_staged_files = {"13_sentinels_aegis_rim.exe", "trg-updater.exe", "SDL3.dll", "libc++.dll"};
     config.install_supported = std::filesystem::exists(install_dir / "trg-updater.exe");
     if (!config.install_supported) {
         config.install_unsupported_reason =
             "The update helper is missing from this installation. Reinstall this release to enable automatic updates.";
     }
 #else
-    config.install_unsupported_reason = "Automatic installation is only available in the Windows release.";
+    config.package_kind = UpdatePackageKind::kAppImage;
+    config.asset_name = [](const SemanticVersion& version) {
+        return "13SentinelsAegisRimPC-v" + version.CoreString() + "-x86_64.AppImage";
+    };
+    config.checksum_asset_name = [](const SemanticVersion& version) {
+        return "13SentinelsAegisRimPC-v" + version.CoreString() + "-x86_64.AppImage.sha256";
+    };
+    // The AppImage file itself ($APPIMAGE), never its read-only mount or an extracted copy, is replaced and restarted.
+    std::filesystem::path appimage;
+    if (trg::update::HasOriginalAppImage(appimage)) {
+        config.appimage_path = appimage;
+        config.restart_executable = appimage;
+        config.install_supported = true;
+    } else {
+        config.install_unsupported_reason = "Automatic installation is available in the AppImage build.";
+    }
 #endif
 
     config.log = [](std::string_view text) { std::printf("Updater: %.*s\n", int(text.size()), text.data()); };

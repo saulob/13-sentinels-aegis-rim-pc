@@ -54,3 +54,6 @@ eboot.bin
 # Bug report service: Wrangler state and Node modules
 /server/**/.wrangler/
 /server/**/node_modules/
+
+# Wrangler local secrets
+/server/**/.dev.vars

@@ -70,7 +70,7 @@ constexpr const char* PageNote(Page page) {
     case Page::Display:
         return "Window size, Monitor and Graphics card are launcher-only: change them before pressing Play.";
     case Page::Graphics:
-        return "Renderer, render resolution, aspect ratio and texture filtering apply after a restart.";
+        return "Renderer, render resolution and texture filtering apply after a restart.";
     case Page::Gameplay:
         return "Language is launcher-only.";
     case Page::Controls:

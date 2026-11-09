@@ -2,6 +2,7 @@
 // report and its preview, the client against a stand-in transport, My Reports, and the source checks that nothing is sent
 // or listened for on its own. The service itself is tested in server/13-sentinels-bug-reports.
 #include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <cstdio>
 #include <filesystem>
@@ -202,14 +203,46 @@ void TestPrivacyFilter() {
     }
     const std::string controls = ScrubText(std::string("a\r\nb\x01\x7F\tc\xC2\x85 d\xC3(\n"), PrivateFacts{});
     CHECK(controls == "a\nb\tc d?(\n");
+    CHECK(ScrubText("mail me at jane.doe+13s@mail.example.org. thanks", PrivateFacts{}) == "mail me at <email>. thanks");
+    CHECK(ScrubText("a@b.co and c@d.io", PrivateFacts{}) == "<email> and <email>");
+    CHECK(ScrubText("shader main@4 and x@y.1 and @handle", PrivateFacts{}) == "shader main@4 and x@y.1 and @handle");
 
+    // Linux and Steam Deck layouts, the AppImage's own mount and a Windows drive seen from WSL.
+    const std::string linux_paths = ScrubText(
+        "Runtime: game /home/ana.silva/Games/13S/game/prepared/CUSA19610-1.02/eboot.bin\n"
+        "Launcher: AppImage /var/home/anasilva/Apps/13SentinelsAegisRimPC-v0.1.0-x86_64.AppImage\n"
+        "Launcher: settings /run/media/anasilva/SD/13S/user/tsr.ini\n"
+        "Launcher: package /mnt/c/Users/AnaStuff/Downloads/13s.pkg\n"
+        "Launcher: program /tmp/.mount_13SentQx7Lm2/usr/bin/13_sentinels_aegis_rim\n",
+        PrivateFacts{});
+    for (const char* secret : {"ana.silva", "anasilva", "AnaStuff", "/mnt/c/Users", "/home/", "/var/home/", "/run/media/"}) {
+        if (Has(linux_paths, secret)) std::printf("  leaked: %s\n", secret);
+        CHECK(!Has(linux_paths, secret));
+    }
+    // As below a Windows profile, the folders under the replaced home stay: they help a diagnosis and name nobody.
+    CHECK(Has(linux_paths, "<home>/Games/13S/game/prepared/CUSA19610-1.02/eboot.bin"));
+    for (const char* kept : {"eboot.bin", "13SentinelsAegisRimPC-v0.1.0-x86_64.AppImage", "tsr.ini", "13s.pkg",
+                             "/tmp/.mount_13SentQx7Lm2/usr/bin/13_sentinels_aegis_rim"}) {
+        if (!Has(linux_paths, kept)) std::printf("  lost: %s\n", kept);
+        CHECK(Has(linux_paths, kept));
+    }
+
+    // The scrubber keeps default account names such as root and deck: they say nothing about a person.
+    const auto generic = [](std::string name) {
+        for (char& c : name) c = char(std::tolower(static_cast<unsigned char>(c)));
+        for (const char* word : {"admin", "administrator", "deck", "default", "game", "guest", "localhost", "owner", "player",
+                                 "public", "root", "steam", "steamdeck", "user"}) {
+            if (name == word) return true;
+        }
+        return false;
+    };
     PrivateFacts real = GatherPrivateFacts({});
     for (const std::string& name : real.user_names) {
-        if (name.size() < 4 || name == "Administrator" || name == "Default") continue;
+        if (name.size() < 4 || generic(name)) continue;
         CHECK(!Has(ScrubText("Hello " + name + " here\nC:\\Users\\" + name + "\\x\n", real), name));
     }
     for (const std::string& name : real.machine_names) {
-        if (name.size() < 4) continue;
+        if (name.size() < 4 || generic(name)) continue;
         CHECK(!Has(ScrubText("Machine " + name + " here\n", real), name));
     }
 }
@@ -499,9 +532,21 @@ void TestTransportAddress() {
     CHECK(ParseServiceAddress("https://reports.example", address) && address.port == 443 && address.path == "/");
     CHECK(ParseServiceAddress("https://reports.example:8443/v1/reports", address) && address.port == 8443 && address.path == "/v1/reports");
     CHECK(!ParseServiceAddress("http://reports.example", address) && !ParseServiceAddress("http://127.0.0.1:8792", address));
-    const HttpReply invalid = PostJsonOverWinHttp("http://reports.example/v1/reports", "{}", HttpLimits{});
+    const HttpReply invalid = PostJsonOverHttps("http://reports.example/v1/reports", "{}", HttpLimits{});
     CHECK(invalid.failure == HttpFailure::kInvalidAddress && invalid.status == 0);
-    CHECK(PostJsonOverWinHttp("", "{}", HttpLimits{}).failure == HttpFailure::kInvalidAddress);
+    CHECK(PostJsonOverHttps("", "{}", HttpLimits{}).failure == HttpFailure::kInvalidAddress);
+
+    HttpReply reply;
+    bool framed = false;
+    CHECK(ParseHttpResponse("HTTP/1.1 201 Created\r\nContent-Type: application/json\r\nContent-Length: 7\r\n\r\n{\"a\":1}", reply, &framed) &&
+          framed && reply.status == 201 && reply.body == "{\"a\":1}");
+    CHECK(!ParseHttpResponse("HTTP/1.1 200 OK\r\ncontent-length: 10\r\n\r\n{\"a\"", reply, &framed) && framed);
+    CHECK(ParseHttpResponse("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n4\r\n{\"a\"\r\nA;x=y\r\n:12345678}\r\n0\r\n\r\n", reply, &framed) &&
+          framed && reply.status == 200 && reply.body == "{\"a\":12345678}");
+    CHECK(!ParseHttpResponse("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n4\r\n{\"a\"\r\n", reply, &framed) && framed);
+    CHECK(ParseHttpResponse("HTTP/1.0 429 Too Many\r\n\r\nslow down", reply, &framed) && !framed && reply.status == 429 && reply.body == "slow down");
+    CHECK(!ParseHttpResponse("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n", reply) && !ParseHttpResponse("SSH-2.0\r\n\r\n", reply) &&
+          !ParseHttpResponse("HTTP/1.1 2x0 OK\r\n\r\n", reply));
 }
 
 void TestHistory(const fs::path& scratch) {
@@ -582,25 +627,34 @@ void TestNothingHappensByItself() {
 
     for (const char* name : {"launcher/launcher.cpp", "launcher/host.cpp", "launcher/options.cpp", "launcher/settings.cpp", "launcher/paths.cpp",
                              "launcher/game_install.cpp", "launcher/game_files.cpp", "launcher/trophy_page.cpp", "launcher/game_process.cpp",
-                             "src/loader.c", "src/launcher_entry.c", "src/runtime.c", "src/runtime_thread.c"}) {
+                             "src/loader.c", "src/runtime.c", "src/runtime_thread.c"}) {
         const std::string text = Source(name);
         CHECK(!text.empty());
-        CHECK(!Has(text, "incident_client.h") && !Has(text, "http_post.h") && !Has(text, "FileReport") && !Has(text, "PostJsonOverWinHttp"));
+        CHECK(!Has(text, "incident_client.h") && !Has(text, "http_post.h") && !Has(text, "FileReport") && !Has(text, "PostJsonOverHttps"));
         CHECK(!Has(text, "winhttp") && !Has(text, "WinHttp") && !Has(text, "WSAStartup") && !Has(text, "trg/download.h"));
     }
     CHECK(Has(launcher, "incident_page.h") && !Has(launcher, "FetchReportStatuses"));
 
     for (const char* name : {"launcher/http_post.cpp", "launcher/incident_client.cpp", "launcher/incident_page.cpp", "launcher/my_reports_page.cpp"}) {
         const std::string text = Source(name);
-        for (const char* forbidden : {"listen(", "accept(", "bind(", "socket(", "WSAStartup", "UPnP", "upnp", "STUN", "stun", "netsh", "ShellExecute",
+        for (const char* forbidden : {"listen(", "accept(", "bind(", "WSAStartup", "UPnP", "upnp", "STUN", "stun", "netsh", "ShellExecute",
                                       "runas", "AddAuthorizedApplication", "INetFwPolicy", "SECURITY_FLAG_IGNORE", "SECURE_FAILURE_FLAG",
-                                      "WINHTTP_OPTION_SECURITY_FLAGS", "std::this_thread::sleep"}) {
+                                      "WINHTTP_OPTION_SECURITY_FLAGS", "std::this_thread::sleep", "SSL_VERIFY_NONE", "SO_REUSEADDR",
+                                      "\"Location\"", "location:"}) {
             if (Has(text, forbidden)) std::printf("  %s mentions %s\n", name, forbidden);
             CHECK(!Has(text, forbidden));
         }
+        // Only the transport opens a socket, to dial the report service.
+        if (std::string_view(name) != "launcher/http_post.cpp") CHECK(!Has(text, "socket("));
     }
     const std::string transport = Source("launcher/http_post.cpp");
     CHECK(Has(transport, "WINHTTP_OPTION_REDIRECT_POLICY_NEVER") && Has(transport, "WINHTTP_FLAG_SECURE") && Has(transport, "WinHttpSetTimeouts"));
+    // The Linux transport: TLS 1.2 or newer, the peer's certificate and host name checked, the same limits.
+    CHECK(Has(transport, "SSL_CTX_set_verify(context_, SSL_VERIFY_PEER") && Has(transport, "X509_VERIFY_PARAM_set1_host") &&
+          Has(transport, "SSL_set_tlsext_host_name") && Has(transport, "TLS1_2_VERSION") && Has(transport, "limits.connect_ms") &&
+          Has(transport, "limits.send_ms") && Has(transport, "limits.receive_ms") && Has(transport, "limits.total_ms") &&
+          Has(transport, "limits.most_reply_bytes"));
+    CHECK(Count(transport, "::socket(") == 1 && Count(transport, "HttpReply PostJsonOverHttps(") == 2);
     CHECK(!Has(Source("launcher/incident_client.h"), "ssf2t") && !Has(Source("launcher/incident_client.cpp"), "dcp-lobby"));
 
     const std::string profile = Source("launcher/game_profile.h");

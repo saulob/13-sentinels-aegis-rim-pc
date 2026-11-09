@@ -49,7 +49,23 @@ function Test-ReleaseSecurity {
     $hasLinux = (Test-Path -LiteralPath (Join-Path $root 'packaging\linux')) -or (Test-Path -LiteralPath (Join-Path $root 'tools\package-linux.sh'))
     $tableRows = @($security -split "`r?`n" | Where-Object { $_ -match '^\|' })
     if ($hasLinux) {
-        Check ($package -match 'AppImage' -and ($tableRows | Where-Object { $_ -match 'AppImage' })) 'the Linux AppImage the project builds is hashed and listed'
+        $combined = Read-Source 'tools\package-release.ps1'
+        $linux = Read-Source 'tools\package-linux.sh'
+        $notes = Read-Source 'packaging\release-notes.md'
+        Check ($combined -match 'Linux AppImage SHA-256:' -and $linux -match 'Linux AppImage SHA-256:') 'the Linux AppImage the project builds is hashed'
+        Check ([bool]($tableRows | Where-Object { $_ -match 'x86_64\.AppImage' })) 'the AppImage is listed in the release security notes'
+        Check ($security.Contains('13SentinelsAegisRimPC-v<version>-x86_64.AppImage')) 'the release notes list the AppImage'
+        $virusTotal = if ($notes -match '(?s)## VirusTotal\s*\n(.*?)(\n## |\z)') { $Matches[1] } else { '' }
+        $entries = @([regex]::Matches($virusTotal, '(?m)^- ([^(:]+?)\s*(\(|:)') | ForEach-Object { $_.Groups[1].Value })
+        Check (($entries -join ',') -eq 'Windows ZIP,Linux AppImage,Windows executable,Updater') "the release notes list exactly the VirusTotal entries ZIP, AppImage, executable, updater (found $($entries -join ', '))"
+        foreach ($entry in $entries) {
+            Check ($virusTotal -match "(?m)^- $([regex]::Escape($entry))\b.*: PENDING$") "the release notes leave VirusTotal '$entry' PENDING"
+        }
+        Check ($notes -notmatch '(?i)launcher\.exe|_launcher\b|Windows launcher') 'the release notes name no separate launcher executable'
+        Check ($notes -match 'run \*\*13_sentinels_aegis_rim\.exe\*\*') 'the release notes tell Windows players to run 13_sentinels_aegis_rim.exe'
+        Check (-not $combined.Contains('LAUNCHER_EXE_SHA256') -and -not $notes.Contains('LAUNCHER_EXE_SHA256')) 'no launcher hash placeholder is filled or expected'
+        Check ($combined -match 'Parity gate' -and $combined -match 'feature-contract-windows\.txt' -and $combined -match 'feature-contract-linux\.txt') 'the combined release compares the Windows and Linux feature contracts'
+        Check ($combined -match "RELEASE NOT PREPARED") 'the combined release stops when a platform fails'
     } else {
         Check ($package -notmatch 'AppImage') 'no AppImage hash is printed: the project has no Linux packaging'
         Check (-not ($tableRows | Where-Object { $_ -match 'AppImage' })) 'no AppImage row in the release notes table'
@@ -66,6 +82,15 @@ function Test-NothingIsSent {
     foreach ($forbidden in @('Invoke-WebRequest', 'Invoke-RestMethod', 'curl ', 'wget ', 'Start-BitsTransfer', 'Net.WebClient',
             'virustotal.com', 'gh release', 'gh api', 'git tag', 'git push', 'git commit', 'Publish-')) {
         Check (-not $package.Contains($forbidden)) "package.ps1 never uses $forbidden"
+    }
+    foreach ($script in @('tools\package-release.ps1', 'tools\package-linux.sh', 'tools\package-release-linux.sh')) {
+        if (-not (Test-Path -LiteralPath (Join-Path $root $script))) { continue }
+        $text = Read-Source $script
+        foreach ($forbidden in @('Invoke-WebRequest', 'Invoke-RestMethod', 'virustotal.com', 'gh release', 'gh api', 'git tag',
+                'git push', 'git commit', 'git add', 'Publish-', 'api.github.com', 'uploads.github.com')) {
+            Check (-not $text.Contains($forbidden)) "$script never uses $forbidden"
+        }
+        Check ($text -match 'nothing is published, tagged or uploaded') "$script states that it publishes nothing"
     }
     Check ($package -match 'nothing is published, tagged or uploaded') 'package.ps1 states that it publishes nothing'
     Check ($package -match 'RELEASE PACKAGE READY \(nothing was published\)') 'the summary states that nothing was published'

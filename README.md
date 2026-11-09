@@ -1,10 +1,16 @@
 # 13 Sentinels: Aegis Rim PC Port
 
-A native Windows x64 port of **13 Sentinels: Aegis Rim** (PlayStation 4: USA, Europe, Japan and Asia). The game's original x86-64
-code runs directly on the PC through replacement PS4 system libraries and a Vulkan renderer derived from shadPS4.
+A native Windows x64 and Linux x86_64 port of **13 Sentinels: Aegis Rim** (PlayStation 4: USA, Europe, Japan and Asia).
+The game's original x86-64 code runs directly on the PC through replacement PS4 system libraries and a Vulkan renderer
+derived from shadPS4.
 
-> **Status: early development (0.1.0).** The installer, launcher, runtime and renderer are in place, but the game has
-> **not yet been verified to boot**. Nothing here claims that it renders or is playable.
+> **Version 0.1.0, the first release**, for Windows (ZIP) and Linux (AppImage) together. The game installs, boots and
+> plays on Windows with the Vulkan renderer. The Linux AppImage has the same applicable feature set and is
+> **experimental**: it is built and checked headlessly but has not been played through yet. See [docs/LINUX.md](docs/LINUX.md).
+>
+> **Compatibility note:** CUSA19610 USA is the primary development build and has received the most gameplay testing. The
+> Europe, Japan and Asia builds have been verified to install, boot, start the game and pass the port's focused
+> compatibility checks, but they have not been fully played from start to finish. Region-specific issues may still exist.
 
 > **No game files are included.** You need your own legally obtained copy of the game as a decrypted (fake) PKG. This
 > project is not affiliated with Vanillaware, Atlus or Sony Interactive Entertainment.
@@ -30,15 +36,17 @@ are the American ones (1.00 differs only in a build date string), so they share 
 
 ## Using it
 
-1. Open `13_sentinels_launcher.exe` (or `13_sentinels_aegis_rim.exe`).
+1. Windows: run `13_sentinels_aegis_rim.exe`; the launcher opens. Linux: put the AppImage in a folder you can write to,
+   `chmod +x 13SentinelsAegisRimPC-v0.1.0-x86_64.AppImage` and start it; the launcher opens.
 2. **Play → Install game...** and select your region's base package. It is unpacked into `game\` next to the program
-   (3.5 to 5 GB).
+   (Linux: next to the AppImage) (3.5 to 5 GB).
 3. Optional: **Play → Install update...** and select an update of the same region (USA 1.01 or 1.02, Europe 1.01,
    Japan 1.03 or 1.04; no earlier update is needed). Each update gets a folder of its own made of hard links to the base
    plus the update's files, so the base stays installed exactly as it was (0.5 to 1.3 GB more each).
 4. Installed builds are detected automatically. The launcher starts the newest installed update of the region; with
-   several regions installed, the region installed last (installing an installed region's package again switches back
-   to it without copying anything). Every region and version has a folder of its own; there is no version to choose.
+   several regions installed, the region installed last (installing another region's base package again switches back
+   to it). Every region and version has a folder of its own; there is no version to choose. **Remove update** returns the
+   active region to its base game, keeping the base, saves and settings.
 5. **Play**.
 
 The installer stages everything next to the active installation, verifies it (identity, required archives, eboot hash,
@@ -48,7 +56,7 @@ or a base package in Install update, is refused before anything is unpacked.
 
 ## Launcher
 
-TRG Launcher pages: **Play** (install game, install update), **Display**, **Graphics**, **Gameplay**
+TRG Launcher pages: **Play** (install game, install update, remove update), **Display**, **Graphics**, **Gameplay**
 (text language, voice language note, skip intro, frame readouts, overlay programs), **Controls** (detected controllers,
 controller icons, keyboard bindings, port hotkeys),
 **Trophies** (kept on this PC), **Bug Report**, **About** (folders, logs, diagnostics, sponsor). There is no Online
@@ -71,15 +79,17 @@ earlier build is ignored. The log's `Render resolution:` lines show what was req
 **Bug reports** are sent only when you press Send report and confirm. The page builds a privacy-filtered report from one
 chosen log, shows exactly what would be sent, and then makes one outgoing HTTPS request to the developer's report service;
 My Reports shows each report's status and the developer's reply when you press Refresh. Nothing is sent at startup or in the
-background, there is no telemetry and no player identity, and the game is fully playable offline. Until the service is
-deployed the page says it is unavailable and offers to save the same report to `logs\reports\` for a GitHub issue. See
+background, there is no telemetry and no player identity, and the game is fully playable offline. When the service cannot
+be reached, the page says so and offers to save the same report to `logs\reports\` for a GitHub issue. See
 [docs/BUG_REPORTS.md](docs/BUG_REPORTS.md); the service is in
 [server/13-sentinels-bug-reports](server/13-sentinels-bug-reports/README.md).
 
 **Port updates.** The launcher checks this repository's latest GitHub release once per start and, for a newer one,
 shows a banner; it installs only when you choose UPDATE NOW and RESTART TO UPDATE, and not while the game is running.
-`trg-updater.exe` replaces only the port's own files after checking the package's SHA-256, and restores them if
-anything fails. Game files, the `user` folder and logs are kept. See [docs/RELEASE_SECURITY.md](docs/RELEASE_SECURITY.md).
+On Windows `trg-updater.exe` replaces only the port's own files after checking the package's SHA-256, and restores them
+if anything fails; on Linux the AppImage file is replaced by the checked new one, keeps its permissions and is started
+again from the same path, or put back if it cannot start. Game files, the `user` folder and logs are kept. See
+[docs/RELEASE_SECURITY.md](docs/RELEASE_SECURITY.md).
 
 **Languages.** Text Language (menus and subtitles) is a launcher choice among the languages the installed region
 has: English, French, German, Italian and Spanish (USA, Europe), Japanese (Japan), Traditional and Simplified Chinese
@@ -89,6 +99,15 @@ English ones too, and the game's own Audio Language option picks between them. S
 trophies are one shared list. The Japanese and Asian games can carry over a prologue demo save found in the user folder. **Skip Intro** answers the startup logo scene's button poll, the
 game's own skip. **Controller icons** Xbox repaints the button atlas and the icons on the built-in manual's pages in the
 installed archives, reversibly (`scripts/prompts/README.md`).
+
+## Linux
+
+The AppImage runs on x86_64 Linux with glibc 2.31 or newer and a Vulkan 1.3 loader and driver. `game`, `user` and `logs`
+are kept next to the AppImage file (its own mount is read-only), or in `~/.local/share/13SentinelsAegisRimPC` when that
+folder is not writable. Without FUSE it unpacks itself to a temporary folder and runs from there. Everything above is the
+same on Linux, except what only Windows has: Direct3D 11 (ANGLE) and Allow overlay programs are not offered. The file
+chooser is `zenity` or `kdialog` when installed, otherwise the launcher's own. See [docs/LINUX.md](docs/LINUX.md) for the
+full Windows/Linux comparison and what has been verified.
 
 ## Building
 
@@ -100,9 +119,14 @@ Windows 10 1903+ with [MSYS2](https://www.msys2.org/) CLANG64:
 .\tools\test.ps1               # focused headless tests
 ```
 
-The output is `build\cmake\clang64\bin\13_sentinels_aegis_rim.exe`, `13_sentinels_launcher.exe` and the update helper
-`trg-updater.exe`. The PC port
+The output is `build\cmake\clang64\bin\13_sentinels_aegis_rim.exe` (launcher and game in one program) and the update
+helper `trg-updater.exe`. The PC port
 version has one source of truth: `project(... VERSION ...)` in `CMakeLists.txt`.
+
+Linux (Ubuntu 20.04 prepared by `packaging/linux/ci-deps.sh`, the release baseline): `tools/build.sh`, `tools/build.sh
+--test` and `tools/package-linux.sh`. A release of both platforms is prepared on Windows by
+`.\tools\package-release.ps1`, which builds the AppImage in WSL2; it publishes nothing
+([docs/LINUX.md](docs/LINUX.md), [docs/RELEASE_SECURITY.md](docs/RELEASE_SECURITY.md)).
 
 ## Layout
 

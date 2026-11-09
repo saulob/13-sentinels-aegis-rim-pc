@@ -50,6 +50,22 @@ static CondWaitFn cond_block;
 static CondTimedWaitFn cond_block_timed;
 static CondFn cond_wake, cond_wake_all, cond_free;
 
+#ifndef _WIN32
+/* runtime_memory.c, linked for the Linux thread stacks, brings an export table this test never looks up. */
+uintptr_t runtime_lookup(const RuntimeExport *table, size_t count, const char *nid) {
+    (void)table, (void)count, (void)nid;
+    return 0;
+}
+#endif
+
+static void nap_ns(uint64_t ns) {
+#ifdef _WIN32
+    compat_sleep_ns(ns);
+#else
+    struct timespec t = {(time_t)(ns / 1000000000u), (long)(ns % 1000000000u)};
+    while (nanosleep(&t, &t) && errno == EINTR) {}
+#endif
+}
 static size_t live_threads(void) {
     pthread_mutex_lock(&lock);
     size_t live = created - exited;
@@ -57,14 +73,14 @@ static size_t live_threads(void) {
     return live;
 }
 static void wait_until(atomic_int *flag, int value) {
-    for (int i = 0; i < 5000 && atomic_load(flag) != value; ++i) sched_yield(), compat_sleep_ns(1000000);
+    for (int i = 0; i < 5000 && atomic_load(flag) != value; ++i) sched_yield(), nap_ns(1000000);
 }
 static const char *wait_state_after(GuestThread *t, const char *expected) {
     const char *what = NULL;
     for (int i = 0; i < 2000; ++i) {
         what = runtime_thread_wait_state(t, NULL);
         if (what && !strcmp(what, expected)) break;
-        compat_sleep_ns(1000000);
+        nap_ns(1000000);
     }
     return what;
 }
@@ -114,7 +130,7 @@ static void test_detached_threads(void) {
     }
     wait_until(&detached_ran, 64);
     CHECK(atomic_load(&detached_ran) == 64);
-    for (int i = 0; i < 2000 && live_threads() != before; ++i) compat_sleep_ns(1000000);
+    for (int i = 0; i < 2000 && live_threads() != before; ++i) nap_ns(1000000);
     CHECK(live_threads() == before);
     CHECK(attr_free(&attr) == 0);
     CHECK(attr == NULL);
@@ -123,7 +139,7 @@ static void test_detached_threads(void) {
     CHECK(create_thread(&t, NULL, return_argument, (void *)1, "detach-later") == 0);
     CHECK(detach_thread(t) == 0);
     CHECK(detach_thread(t) == KERR(22));
-    for (int i = 0; i < 2000 && live_threads() != before; ++i) compat_sleep_ns(1000000);
+    for (int i = 0; i < 2000 && live_threads() != before; ++i) nap_ns(1000000);
     CHECK(live_threads() == before);
 }
 

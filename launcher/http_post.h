@@ -34,9 +34,14 @@ struct ServiceAddress {
 // `https://host[:port]` followed by an absolute path. No other scheme, user name, query or fragment is accepted.
 bool ParseServiceAddress(std::string_view url, ServiceAddress& address);
 
-using PostJson = std::function<HttpReply(const std::string& url, const std::string& body, const HttpLimits& limits)>;
+// A raw HTTP/1.x response: its status and body (Content-Length, chunked, or everything after the headers). `framed`
+// tells whether the headers give the body's end, so a complete reply needs no closed connection.
+bool ParseHttpResponse(const std::string& raw, HttpReply& reply, bool* framed = nullptr);
 
-// Certificates are validated by the system; redirects are not followed.
-HttpReply PostJsonOverWinHttp(const std::string& url, const std::string& body, const HttpLimits& limits);
+using PostJson =std::function<HttpReply(const std::string& url, const std::string& body, const HttpLimits& limits)>;
+
+// WinHTTP on Windows, sockets and OpenSSL elsewhere. Certificates and the host name are validated against the system's
+// certificate store; redirects are not followed.
+HttpReply PostJsonOverHttps(const std::string& url, const std::string& body, const HttpLimits& limits);
 
 } // namespace tsr

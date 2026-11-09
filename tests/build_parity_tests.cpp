@@ -294,11 +294,9 @@ uint64_t Le64(const uint8_t* p) {
 }
 
 bool LoadImage(const GameBuild& build, Image& image) {
-    fs::path folder = fs::path(TSR_SOURCE_DIR) / "build" / "image" / build.folder;
     const char* extra = std::getenv("TSR_TEST_IMAGES");
-    if (!fs::exists(folder / "boot.bin") && extra && *extra) {
-        folder = fs::path(extra) / build.folder;
-    }
+    const fs::path folder = extra && *extra ? fs::path(extra) / build.folder
+                                            : fs::path(TSR_SOURCE_DIR) / "build" / "image" / build.folder;
     std::ifstream in(folder / "boot.bin", std::ios::binary);
     std::vector<uint8_t> file((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
     if (file.size() < 8 * 16 || std::memcmp(file.data(), "TSRBOOT1", 8)) {
@@ -322,6 +320,8 @@ void TestRealImages() {
         current = build.label;
         Image image;
         if (!LoadImage(build, image)) {
+            const char* required = std::getenv("TSR_TEST_IMAGES");
+            CHECK(!required || !*required);
             std::printf("skipped: no %s boot image (build\\image or TSR_TEST_IMAGES)\n", build.label);
             continue;
         }

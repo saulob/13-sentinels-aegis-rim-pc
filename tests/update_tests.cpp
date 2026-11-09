@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -19,6 +20,7 @@
 #include "updater/third_party/miniz/miniz.h"
 #include "updater/update_job.h"
 #include "updater/update_paths.h"
+#include "updater/update_platform.h"
 #include "updater/update_zip.h"
 #include "updater/url_policy.h"
 #include "updater/version.h"
@@ -484,26 +486,26 @@ void TestInstallFailures() {
     TempDir temp;
     UpdateJob job;
     const std::filesystem::path install =
-        MakeJob(job, temp.path, "13_sentinels_aegis_rim.exe\n13_sentinels_launcher.exe\n");
+        MakeJob(job, temp.path, "13_sentinels_aegis_rim.exe\nSDL3.dll\n");
     std::filesystem::create_directories(install / "13_sentinels_aegis_rim.exe");
-    WriteFile(install / "13_sentinels_launcher.exe", "old shortcut");
+    WriteFile(install / "SDL3.dll", "old library");
     WriteFile(job.staging_dir / "13_sentinels_aegis_rim.exe", "new program");
-    WriteFile(job.staging_dir / "13_sentinels_launcher.exe", "new shortcut");
+    WriteFile(job.staging_dir / "SDL3.dll", "new library");
     const InstallOutcome outcome = InstallFiles(job, {}, false);
     CHECK(outcome.status == InstallStatus::kBackupFailed);
     CHECK(!outcome.error.empty());
     CHECK(std::filesystem::is_directory(install / "13_sentinels_aegis_rim.exe"));
-    CHECK(ReadFile(install / "13_sentinels_launcher.exe") == "old shortcut");
+    CHECK(ReadFile(install / "SDL3.dll") == "old library");
   }
   {
     TempDir temp;
     UpdateJob job;
     const std::filesystem::path install =
-        MakeJob(job, temp.path, "13_sentinels_aegis_rim.exe\n13_sentinels_launcher.exe\n");
+        MakeJob(job, temp.path, "13_sentinels_aegis_rim.exe\nSDL3.dll\n");
     WriteFile(install / "13_sentinels_aegis_rim.exe", "old program");
-    WriteFile(install / "13_sentinels_launcher.exe", "old shortcut");
+    WriteFile(install / "SDL3.dll", "old library");
     WriteFile(job.staging_dir / "13_sentinels_aegis_rim.exe", "new program");
-    WriteFile(job.staging_dir / "13_sentinels_launcher.exe", "new shortcut");
+    WriteFile(job.staging_dir / "SDL3.dll", "new library");
     int replacements = 0;
     InstallOptions lose_backup;
     lose_backup.replace = [&](const std::filesystem::path& from, const std::filesystem::path& to) {
@@ -518,7 +520,7 @@ void TestInstallFailures() {
     const InstallOutcome outcome = InstallFiles(job, lose_backup, false);
     CHECK(outcome.status == InstallStatus::kInstallFailedRollbackFailed);
     CHECK(outcome.error.find("could not be restored") != std::string::npos);
-    CHECK(std::filesystem::exists(job.staging_dir / "13_sentinels_launcher.exe"));
+    CHECK(std::filesystem::exists(job.staging_dir / "SDL3.dll"));
   }
   {
     TempDir temp;
@@ -545,8 +547,9 @@ void TestPackagingNames() {
   CHECK(windows_package.find("13SentinelsAegisRimPC-v$version-windows-x64") != std::string::npos);
   CHECK(windows_package.find("trg-updater.exe") != std::string::npos);
   CHECK(windows_package.find("project\\(thirteen_sentinels_aegis_rim_pc VERSION") != std::string::npos);
-  CHECK(windows_package.find("$UpdaterRequiredFiles = @('13_sentinels_aegis_rim.exe', '13_sentinels_launcher.exe', "
-                             "'trg-updater.exe', 'SDL3.dll', 'libc++.dll')") != std::string::npos);
+  CHECK(windows_package.find("$UpdaterRequiredFiles = @('13_sentinels_aegis_rim.exe', 'trg-updater.exe', 'SDL3.dll', "
+                             "'libc++.dll')") != std::string::npos);
+  CHECK(windows_package.find("$Programs = @('13_sentinels_aegis_rim.exe', 'trg-updater.exe')") != std::string::npos);
 }
 
 void TestUrlPolicy() {
@@ -616,7 +619,6 @@ void TestPaths() {
   CHECK(!IsProtectedRelativePath("rexruntime.dll"));
   CHECK(!IsProtectedRelativePath("assets/launcher/header-art.png"));
   CHECK(!IsProtectedRelativePath("licenses/THIRD-PARTY-LICENSES.txt"));
-  CHECK(!IsProtectedRelativePath("13_sentinels_launcher.exe"));
   CHECK(!IsProtectedRelativePath("SDL3.dll"));
   CHECK(!IsProtectedRelativePath("libGLESv2.dll"));
   CHECK(!IsProtectedRelativePath("README.txt"));
@@ -626,7 +628,7 @@ std::vector<std::pair<std::string, std::string>> PortPackage(const std::vector<s
                                                              const std::vector<std::pair<std::string, std::string>>& extra) {
   const std::string root = "13SentinelsAegisRimPC-v0.2.0-windows-x64/";
   std::vector<std::pair<std::string, std::string>> entries;
-  for (const char* file : {"13_sentinels_aegis_rim.exe", "13_sentinels_launcher.exe", "trg-updater.exe", "SDL3.dll",
+  for (const char* file : {"13_sentinels_aegis_rim.exe", "trg-updater.exe", "SDL3.dll",
                            "libc++.dll", "libGLESv2.dll", "README.txt", "LICENSE.txt", "assets/launcher/header-art.png",
                            "licenses/THIRD-PARTY-LICENSES.txt"}) {
     if (std::find(omit.begin(), omit.end(), file) == omit.end()) {
@@ -663,23 +665,32 @@ void TestPortContract() {
   CHECK(UrlHostAllowed(config.releases_url, config.allowed_hosts));
   CHECK(config.download_url_prefix == "https://github.com/saulob/13-sentinels-aegis-rim-pc/releases/download/");
   CHECK(config.allowed_hosts == GitHubReleaseHosts());
-  CHECK(config.package_kind == UpdatePackageKind::kZip);
   const std::optional<SemanticVersion> next = ParseVersion("v0.2.0+build.7");
-  CHECK(next && config.asset_name(*next) == "13SentinelsAegisRimPC-v0.2.0-windows-x64.zip");
-  CHECK(next && config.checksum_asset_name(*next) == "13SentinelsAegisRimPC-v0.2.0-windows-x64.zip.sha256");
-  CHECK(config.restart_executable == temp.path / "13_sentinels_aegis_rim.exe");
-  CHECK(config.install_supported && config.install_unsupported_reason.empty());
   CHECK(!config.restart_arguments.empty() && config.restart_arguments.back() == "--launcher");
   for (const std::string& argument : config.restart_arguments) {
     CHECK(argument.rfind("--tsr-skip-launcher", 0) != 0 && argument != "--tsr-game");
   }
-  const std::vector<std::string> required = {"13_sentinels_aegis_rim.exe", "13_sentinels_launcher.exe",
-                                             "trg-updater.exe", "SDL3.dll", "libc++.dll"};
+  // The ZIP holds Windows programs; the checks of its contents below apply to the package either platform refuses.
+  const std::vector<std::string> required = {"13_sentinels_aegis_rim.exe", "trg-updater.exe", "SDL3.dll",
+                                             "libc++.dll"};
+#if defined(_WIN32)
+  CHECK(config.package_kind == UpdatePackageKind::kZip);
+  CHECK(next && config.asset_name(*next) == "13SentinelsAegisRimPC-v0.2.0-windows-x64.zip");
+  CHECK(next && config.checksum_asset_name(*next) == "13SentinelsAegisRimPC-v0.2.0-windows-x64.zip.sha256");
+  CHECK(config.restart_executable == temp.path / "13_sentinels_aegis_rim.exe");
+  CHECK(config.install_supported && config.install_unsupported_reason.empty());
   CHECK(config.required_staged_files == required);
 
   TempDir bare;
   const UpdateConfig without_helper = tsr::MakeUpdateConfig(bare.path);
   CHECK(!without_helper.install_supported && !without_helper.install_unsupported_reason.empty());
+#else
+  CHECK(config.package_kind == UpdatePackageKind::kAppImage);
+  CHECK(next && config.asset_name(*next) == "13SentinelsAegisRimPC-v0.2.0-x86_64.AppImage");
+  CHECK(next && config.checksum_asset_name(*next) == "13SentinelsAegisRimPC-v0.2.0-x86_64.AppImage.sha256");
+  // Outside an AppImage (tools/build.sh output) nothing can be replaced.
+  CHECK(!config.install_supported && !config.install_unsupported_reason.empty() && config.appimage_path.empty());
+#endif
 
   CHECK(PortPackageAccepted(temp.path, required, {}, {}));
   for (const std::string& file : required) {
@@ -705,6 +716,80 @@ void TestPortContract() {
   }
 }
 
+#if !defined(_WIN32)
+// A type 2 AppImage as its runtime begins: an ELF program with 'A' 'I' 2 at offset 8, bytes the kernel ignores when it
+// starts the program, followed by the file system (here a marker).
+std::string AppImageLike(const std::string& marker) {
+  std::ifstream in("/bin/true", std::ios::binary);
+  std::string program{std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
+  if (program.size() > 16) {
+    program[8] = 'A';
+    program[9] = 'I';
+    program[10] = '\x02';
+  }
+  return program + marker;
+}
+
+std::string ReadAll(const std::filesystem::path& path) {
+  std::ifstream in(path, std::ios::binary);
+  return {std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
+}
+
+bool Leftovers(const std::filesystem::path& folder) {
+  for (const auto& entry : std::filesystem::directory_iterator(folder)) {
+    if (entry.path().filename().string().find(".trg-update-") != std::string::npos) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// The AppImage is replaced as one file, keeps its mode, starts again from its own path, and is restored when the new
+// one cannot start. Only /bin/true is ever run.
+void TestAppImageUpdate() {
+  std::printf("AppImage update\n");
+  TempDir temp;
+  const std::filesystem::path installed = temp.path / "beside" / "13SentinelsAegisRimPC-v0.1.0-x86_64.AppImage";
+  const std::filesystem::path downloaded = temp.path / "download" / "13SentinelsAegisRimPC-v0.2.0-x86_64.AppImage";
+  WriteFile(installed, AppImageLike("OLD"));
+  WriteFile(downloaded, AppImageLike("NEW"));
+  std::filesystem::permissions(installed, std::filesystem::perms(0750));
+  std::filesystem::permissions(downloaded, std::filesystem::perms(0644));
+  const std::string old_image = ReadAll(installed);
+
+  unsetenv("APPDIR");
+  setenv("APPIMAGE", installed.c_str(), 1);
+  std::filesystem::path found;
+  CHECK(HasOriginalAppImage(found) && found == std::filesystem::weakly_canonical(installed));
+  const UpdateConfig config = tsr::MakeUpdateConfig(temp.path / "mount" / "usr" / "bin");
+  CHECK(config.install_supported && config.appimage_path == found && config.restart_executable == found);
+  // Never the mount or the extraction folder it runs from, and never a file that is not an AppImage.
+  setenv("APPDIR", (temp.path / "beside").c_str(), 1);
+  CHECK(!HasOriginalAppImage(found));
+  unsetenv("APPDIR");
+  WriteFile(temp.path / "AppRun", "#!/bin/sh\nexec usr/bin/13_sentinels_aegis_rim \"$@\"\n");
+  setenv("APPIMAGE", (temp.path / "AppRun").c_str(), 1);
+  CHECK(!HasOriginalAppImage(found));
+  setenv("APPIMAGE", (temp.path / "missing.AppImage").c_str(), 1);
+  CHECK(!HasOriginalAppImage(found));
+  unsetenv("APPIMAGE");
+  CHECK(!HasOriginalAppImage(found));
+
+  std::string error;
+  WriteFile(temp.path / "download" / "page.html", "<html>not found</html>");
+  CHECK(!ApplyAppImageUpdate(temp.path / "download" / "page.html", installed, {"--launcher"}, error) && !error.empty());
+  CHECK(ReadAll(installed) == old_image && !Leftovers(installed.parent_path()));
+
+  WriteFile(temp.path / "download" / "broken.AppImage", std::string("\x7f" "ELF\x02\x01\x01\x00" "AI\x02", 11) + "NEW");
+  CHECK(!ApplyAppImageUpdate(temp.path / "download" / "broken.AppImage", installed, {"--launcher"}, error));
+  CHECK(ReadAll(installed) == old_image && !Leftovers(installed.parent_path()));
+
+  CHECK(ApplyAppImageUpdate(downloaded, installed, {"--launcher"}, error) && error.empty());
+  CHECK(ReadAll(installed) == AppImageLike("NEW") && !Leftovers(installed.parent_path()));
+  CHECK((std::filesystem::status(installed).permissions() & std::filesystem::perms::all) == std::filesystem::perms(0751));
+}
+#endif
+
 }  // namespace
 
 int main() {
@@ -722,6 +807,9 @@ int main() {
   TestUrlPolicy();
   TestPaths();
   TestPortContract();
+#if !defined(_WIN32)
+  TestAppImageUpdate();
+#endif
   std::printf("%d checks, %d failures\n", g_checks, g_failures);
   return g_failures == 0 ? 0 : 1;
 }

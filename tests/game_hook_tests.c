@@ -4,11 +4,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <windows.h>
 
 #include "boot_image.h"
 #include "guest_hook.h"
 #include "skip_intro.h"
+#include "test_pages.h"
 
 static int checks, failures;
 #define CHECK(condition) do { ++checks; if (!(condition)) { ++failures; printf("FAIL line %d: %s\n", __LINE__, #condition); } } while (0)
@@ -18,6 +18,7 @@ static void test_real_sites(void) {
     const int have_base = boot_image_load_build("CUSA19610-1.00", "image-1.00", &base);
     const int have_first = boot_image_load_build("CUSA19610-1.01", "image-1.01", &first);
     const int have_update = boot_image_load_build("CUSA19610-1.02", "image-1.02", &update);
+    CHECK((have_base && have_first && have_update) || !boot_image_required());
     uint32_t site = 0;
     if (have_base) {
         CHECK(skip_intro_locate(base.bytes, base.size, "CUSA19610-1.00", &site) == SKIP_INTRO_FOUND && site == 0x3aff67);
@@ -104,6 +105,7 @@ static void test_regional_sites(void) {
     for (size_t i = 0; i < count; ++i) {
         BootImage image = {0};
         if (!boot_image_load_build(kRegional[i].build, "", &image)) {
+            CHECK(!boot_image_required());
             printf("skipped: no %s boot image (TSR_TEST_IMAGES)\n", kRegional[i].build);
             continue;
         }
@@ -153,13 +155,13 @@ static void test_skip_intro_runs(uint8_t *code) {
 int main(void) {
     test_real_sites();
     test_regional_sites();
-    uint8_t *code = VirtualAlloc(NULL, 2 * 8192, MEM_RESERVE | MEM_COMMIT, PAGE_EXECUTE_READWRITE);
+    uint8_t *code = test_pages(2 * 8192, 1);
     if (!code) {
         printf("FAIL: no executable memory\n");
         return 1;
     }
     test_skip_intro_runs(code);
-    VirtualFree(code, 0, MEM_RELEASE);
+    test_pages_free(code, 2 * 8192);
     printf("game hooks: %d checks, %d failed\n", checks, failures);
     return failures ? 1 : 0;
 }

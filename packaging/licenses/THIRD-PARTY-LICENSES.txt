@@ -1,9 +1,11 @@
 Third-party material in 13 Sentinels: Aegis Rim PC Port. The program itself is GPL-2.0-or-later (LICENSE.txt); its source
-code is at https://github.com/saulob/13-sentinels-aegis-rim-pc. The loader, runtime and video core lineage is listed in
-docs/REFERENCES.md and gpu/VENDOR.txt of the source.
+code is at https://github.com/saulob/13-sentinels-aegis-rim-pc. The video core lineage is listed in gpu/VENDOR.txt of
+the source. The FFmpeg DLLs of the Windows package are GPL-3.0-or-later, so that package as a whole is distributed under
+the GPL version 3. The Linux AppImage's FFmpeg is an LGPL build; that package is distributed under GPL-2.0-or-later.
 
-In the release package, the licence texts named below are in licenses\<folder>\, and licenses\MSYS2-PACKAGES.txt
-lists the exact version and source package of every DLL that ships next to 13_sentinels_aegis_rim.exe.
+In the Windows package, the licence texts named below are in licenses\<folder>\, and licenses\MSYS2-PACKAGES.txt lists
+the exact version and source package of every DLL that ships next to 13_sentinels_aegis_rim.exe. In the AppImage they
+are in usr/share/licenses/13SentinelsAegisRimPC/ (see "Linux AppImage" below).
 
 
 ========================================================================
@@ -48,9 +50,6 @@ Noto Sans TC 2.004 (embedded font; stands in for the PS4 Chinese system font set
                             SIL Open Font License 1.1. Copyright 2014-2021 Adobe.                licenses\NotoSansTC
                             NotoSansTC-Regular.otf unmodified from https://github.com/notofonts/noto-cjk,
                             Sans/SubsetOTF/TC at commit f8d157532fbfaeda587e826d4cd5b21a49186f7c.
-FFmpeg (libavcodec, libavutil, libswscale; loaded as DLLs from MSYS2, H.264 decoding for Videodec2)
-                            LGPL-2.1-or-later or GPL, as the MSYS2 build is configured; listed in
-                            licenses\MSYS2-PACKAGES.txt with its source.
 Dear ImGui 1.92.9b          MIT. Copyright (c) 2014-2025 Omar Cornut.                            licenses\imgui
 magic_enum                  MIT. Copyright (c) 2019 - 2024 Daniil Goncharov.                     licenses\magic_enum
 miniz                       MIT. Copyright 2013-2014 RAD Game Tools and Valve Software;
@@ -134,6 +133,7 @@ ANGLE (libEGL.dll, libGLESv2.dll), the Direct3D 11 renderer
     THE SOFTWARE.
 
 libc++                      Apache-2.0 WITH LLVM-exception                                       licenses\libc++
+libunwind                   Apache-2.0 WITH LLVM-exception                                       licenses\libunwind
 winpthreads                 MIT AND BSD-3-Clause-Clear                                           licenses\libwinpthread
 zlib                        Zlib                                                                 licenses\zlib
 bzip2                       bzip2 licence                                                        licenses\bzip2
@@ -145,32 +145,44 @@ GLib                        LGPL-2.1-or-later                                   
 libintl (gettext)           LGPL-2.1-or-later                                                    licenses\gettext-runtime
 libiconv                    LGPL-2.1-or-later                                                    licenses\libiconv
 
-FreeType loads HarfBuzz, which brings Graphite2, GLib, libintl, libiconv, PCRE2 and Brotli with it. GLib, libintl
-and libiconv are LGPL libraries, dynamically linked and replaceable; their source packages are listed in
-licenses\MSYS2-PACKAGES.txt. vulkan-1.dll comes with the graphics driver and is not part of the package.
+FFmpeg (avcodec, avutil, swscale, swresample)
+                            GPL-3.0-or-later: the MSYS2 build is configured with --enable-gpl
+                            --enable-version3.                                                   licenses\ffmpeg
+
+FreeType loads HarfBuzz, which brings Graphite2, GLib, libintl, libiconv, PCRE2 and Brotli with it. Videodec2 (the
+game's H.264 movies) decodes with FFmpeg, and the MSYS2 FFmpeg loads the libraries of every codec and format it was
+built with: aom, dav1d, rav1e, svt-av1, libvpx, x264, x265, xvidcore, lame, opus, speex, gsm, opencore-amr, libvorbis,
+libogg, libtheora, liblc3, libsoxr, libjxl, highway, libwebp, openjpeg2, libjpeg-turbo, libtiff, lerc, libdeflate,
+jbigkit, librsvg, cairo, pixman, pango, fribidi, libthai, libdatrie, fontconfig, expat, gdk-pixbuf2, libffi, libxml2,
+lcms2, libva, libvpl, shaderc, zvbi, xz and zstd. licenses\MSYS2-PACKAGES.txt records the version, licence and source
+package of each one, and licenses\<package> holds its licence texts. MSYS2 installs none for ffmpeg, lame, libtheora,
+libvorbis, libvpx, libx264, opencore-amr, x265 and xvidcore; theirs are taken from the same MSYS2 source packages.
+The LGPL libraries among them are dynamically linked and replaceable. vulkan-1.dll comes with the graphics driver and
+is not part of the package.
 
 
 ========================================================================
-Shared libraries inside the Linux AppImage (usr/lib)
+Linux AppImage
 ========================================================================
 
-SDL3                        Zlib                                       licenses/system/SDL3
-FreeType                    FTL (FreeType licence; offered as FTL or GPL-2.0-or-later)
-libpng                      libpng licence
-Zydis, Zycore               MIT                                        licenses/system/zydis
-xxHash                      BSD-2-Clause                               licenses/system/xxhash
-fmt                         MIT                                        licenses/system/fmt
-OpenSSL (libcrypto 3)       Apache-2.0                                 licenses/system/openssl (game installer: hashes
-                                                                        and package decryption)
-Brotli                      MIT
-bzip2                       bzip2 licence
-libstdc++, libgcc_s         GPL-3.0-or-later WITH GCC-exception-3.1    (fallback copies in usr/lib/compat, used only
-                                                                        when the system's are older)
+The AppImage's 13_sentinels_aegis_rim has the same components compiled in as the Windows executable (above). Its
+usr/lib holds the shared libraries it loads, each listed with the Ubuntu 20.04 package or pinned source it comes from in
+SYSTEM-PACKAGES.txt, with that package's licence text in system/<package>/: SDL3 (Zlib), FreeType (FTL), libpng
+(libpng), OpenSSL libssl and libcrypto (Apache-2.0), fmt (MIT), Zydis and Zycore (MIT), xxHash (BSD-2-Clause) and the
+libraries they load. glibc, the Vulkan loader and drivers, OpenGL/EGL, X11, Wayland, libdecor and the audio servers
+come from the player's system and are not part of the package.
 
-The libraries with a licence path above are built from pinned sources by packaging/linux/ci-deps.sh; the licence text
-of each Ubuntu package is in licenses/system/<package>/copyright. licenses/SYSTEM-PACKAGES.txt lists every library
-with where it comes from. glibc, the Vulkan loader, the graphics drivers, X11/Wayland and the
-audio libraries come from the player's system and are not part of the AppImage.
+FFmpeg (avcodec, avutil, swscale)
+                            LGPL-2.1-or-later: built unmodified by tools/build-ffmpeg-linux.sh
+                            from the signed FFmpeg 8.1.1 tarball, configured without GPL
+                            parts, with the H.264 and HEVC decoders only. Dynamically linked
+                            and replaceable; system/ffmpeg/SOURCE.txt names the exact source
+                            and configuration.                                                  system/ffmpeg
+
+The AppImage runtime, the program at the front of the file, is AppImage/type2-runtime (MIT) at the commit pinned in
+patches/appimage-runtime/baseline.env with that folder's patch, statically linked with musl (MIT), libfuse
+(LGPL-2.1), squashfuse (BSD-2-Clause), zstd (BSD-3-Clause), zlib (Zlib) and mimalloc (MIT).
+tools/build-appimage-runtime.sh rebuilds it from those public sources.
 
 
 ========================================================================

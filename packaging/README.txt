@@ -27,7 +27,11 @@ region you installed last; there is no version to pick. Any other version is
 refused. A package still encrypted for a PS4 console cannot be unpacked on a
 PC.
 
-This is an early development release: the game has not been verified to boot.
+Compatibility note: CUSA19610 USA is the primary development build and has
+received the most gameplay testing. The Europe, Japan and Asia builds have been
+verified to install, boot, start the game and pass the port's focused
+compatibility checks, but they have not been fully played from start to
+finish. Region-specific issues may still exist.
 
 
 REQUIREMENTS
@@ -46,12 +50,13 @@ REQUIREMENTS
 INSTALL
 -------
 1. Extract the ZIP anywhere you can write to (not "Program Files").
-2. Run 13_sentinels_launcher.exe. The launcher opens.
+2. Run 13_sentinels_aegis_rim.exe. The launcher opens.
 3. On the Play page, click "Install game..." and select your base game .pkg
    file. The launcher checks the package and unpacks it into the "game" folder
    next to the program. The .pkg file is only read.
 4. Optional: click "Install update..." and select an update .pkg of the same
    region. The base stays installed; the newest installed update starts.
+   "Remove Update..." removes the installed updates and returns to the base.
 5. Press PLAY.
 
 To repair the game files, use "Reinstall game..." on the Play page. Your
@@ -87,8 +92,7 @@ PLAYING
 - If the game closes right after PLAY while a recording, chat or performance
   overlay program is running, turn on Gameplay > Allow overlay programs in the
   launcher.
-- To open the launcher again after turning it off, hold Shift while starting,
-  or start 13_sentinels_launcher.exe.
+- To open the launcher again after turning it off, hold Shift while starting.
 
 
 WHERE THINGS ARE
@@ -102,9 +106,10 @@ WHERE THINGS ARE
 These folders are created when they are first needed and are not part of the
 download. When updating the port, keep "user" (and "game", to skip
 reinstalling).
-If the game does not start or crashes, save a report from the launcher's Bug
-Report page (nothing is sent automatically) and attach it, or the newest
-13_sentinels_aegis_rim_*.log file from the "logs" folder, to an issue at
+If the game does not start or crashes, use the launcher's Bug Report page: it
+sends a privacy-filtered report with one log only when you press Send report
+and confirm, and can save the same report instead. You can also attach the
+newest 13_sentinels_aegis_rim_*.log file from the "logs" folder to an issue at
 https://github.com/saulob/13-sentinels-aegis-rim-pc/issues
 
 
@@ -116,6 +121,8 @@ LICENSE.txt.
 
 Third-party components keep their own licenses. Their license files and
 notices are in the "licenses" folder, starting with THIRD-PARTY-LICENSES.txt.
+The FFmpeg libraries included are GPL-3.0-or-later, so the package as a whole
+is distributed under the GPL version 3.
 
 Game files are not included and are not covered by this project's license.
 This port is not affiliated with or endorsed by Vanillaware, Atlus, SEGA,

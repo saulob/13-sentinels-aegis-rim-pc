@@ -17,8 +17,7 @@ shares nothing with any other project's service.
 4. **My Reports** lists the reports sent from this PC. Their status, the fixed version and the developer's reply are
    fetched only when the player presses **Refresh**; **What was sent** reads the stored report back the same way.
 
-If the service is not set up in the build, or the PC is offline or blocked by a firewall, the page says so and keeps the
-text. **Save report** writes the same filtered report to `logs\reports\` for attaching to a GitHub issue. The game is
+If the service cannot be reached, for example offline or blocked by a firewall, the page says so and keeps the text. **Save report** writes the same filtered report to `logs\reports\` for attaching to a GitHub issue. The game is
 fully playable without any of this.
 
 ## What is sent
@@ -43,7 +42,7 @@ itself, and no log is sent without the player's confirmation.
 
 `launcher/log_scrubber.cpp` filters the description and the log before they are shown or sent. It removes or masks
 Windows and POSIX user names, computer names, profile and home folders, other local folders outside Windows' own, network
-share paths, IPv4 and IPv6 addresses, account numbers, tokens, passwords and other labelled secrets, and control
+share paths, IPv4 and IPv6 addresses, email addresses, account numbers, tokens, passwords and other labelled secrets, and control
 characters. It keeps what a report is for: versions, the operating system, the renderer, the graphics card, driver and
 audio diagnostics, error messages, and the names (not the folders) of files. **Automatic filtering cannot promise to catch
 every private value**, which is why the page shows the preview and says so.
@@ -58,8 +57,9 @@ every private value**, which is why the page shows the preview and says so.
 
 ## Network behaviour
 
-- Outgoing HTTPS only (port 443), by WinHTTP with the system's certificate validation, TLS 1.2 or newer, no redirects.
-  Plain `http://` is refused.
+- Outgoing HTTPS only (port 443), TLS 1.2 or newer, no redirects: by WinHTTP with the system's certificate validation on
+  Windows; on Linux by OpenSSL (bundled in the AppImage), which checks the certificate against the distribution's CA bundle
+  and the host name. Both use the same time and size limits. Plain `http://` is refused.
 - The launcher never listens, binds or opens a port, does not touch Windows Firewall, does not ask for administrator
   rights, and does not use UPnP, STUN or hole punching. An ordinary firewall allows outgoing HTTPS already; if a security
   program blocks it, the page says so and names port 443.

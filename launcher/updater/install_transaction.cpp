@@ -115,7 +115,18 @@ bool ReadManifest(const UpdateJob& job, const InstallOptions& options, std::vect
 
 bool ReplaceFile(const std::filesystem::path& from, const std::filesystem::path& to) {
 #if defined(_WIN32)
-  return MoveFileExW(from.c_str(), to.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != 0;
+  // A virus scanner briefly holds a freshly written file; only those errors are retried, for up to two seconds.
+  for (int attempt = 0;; ++attempt) {
+    if (MoveFileExW(from.c_str(), to.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != 0) {
+      return true;
+    }
+    const DWORD error = GetLastError();
+    if (attempt == 20 ||
+        (error != ERROR_SHARING_VIOLATION && error != ERROR_LOCK_VIOLATION && error != ERROR_ACCESS_DENIED)) {
+      return false;
+    }
+    Sleep(100);
+  }
 #else
   return rename(from.c_str(), to.c_str()) == 0;
 #endif

@@ -778,13 +778,10 @@ static uint64_t read64(FILE *f) {
 
 static uint8_t *boot_image(const char *folder, uint64_t *size, uint64_t *entry, size_t extra) {
     char path[1024];
-    snprintf(path, sizeof(path), "%s/build/image/%s/boot.bin", TSR_SOURCE_DIR, folder);
-    FILE *f = fopen(path, "rb");
     const char *extra_root = getenv("TSR_TEST_IMAGES");
-    if (!f && extra_root && *extra_root) {
-        snprintf(path, sizeof(path), "%s/%s/boot.bin", extra_root, folder);
-        f = fopen(path, "rb");
-    }
+    if (extra_root && *extra_root) snprintf(path, sizeof(path), "%s/%s/boot.bin", extra_root, folder);
+    else snprintf(path, sizeof(path), "%s/build/image/%s/boot.bin", TSR_SOURCE_DIR, folder);
+    FILE *f = fopen(path, "rb");
     if (!f) return NULL;
     char magic[8];
     if (fread(magic, 1, 8, f) != 8 || memcmp(magic, "TSRBOOT1", 8)) return fclose(f), NULL;
@@ -813,6 +810,8 @@ static void real_images(void) {
         uint64_t size = 0, entry = 0;
         uint8_t *image = boot_image(folders[b], &size, &entry, stubs);
         if (!image) {
+            const char *required = getenv("TSR_TEST_IMAGES");
+            CHECK(!required || !*required);
             printf("no boot image for %s: skipped\n", folders[b]);
             continue;
         }

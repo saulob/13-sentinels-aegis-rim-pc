@@ -706,7 +706,7 @@ void ReportRewrittenCommands(std::span<const u32> submitted, const u32* guest) {
         return;
     }
     reported = true;
-    std::printf("GPU: the game rewrote a command buffer it had submitted before the GPU had read it (%zu dwords "
+    std::printf("GPU: a submitted command buffer changed in guest memory while the GPU processed it (%zu dwords "
                 "at %p, first change at dword %zu: %08x -> %08x); the GPU read the words as submitted\n",
                 submitted.size(), static_cast<const void*>(guest), at, submitted[at], guest[at]);
 }
