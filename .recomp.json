@@ -8,17 +8,38 @@
     "serial": "CUSA19610"
   },
   "project": "13 Sentinels: Aegis Rim PC Port",
-  "status": "in development",
+  "status": "released",
   "targets": [
-    "Windows"
+    "Windows",
+    "Linux",
+    "Steam Deck"
   ],
   "toolchain": "shadPS4-derived runtime",
-  "approach": "Original PS4 x86-64 game code running directly on Windows through replacement PS4 system libraries and a Vulkan renderer derived from shadPS4",
+  "approach": "Original PS4 x86-64 game code running directly on Windows and Linux through replacement PS4 system libraries and renderers derived from shadPS4",
   "maintainers": [
     {
       "name": "saulob",
       "link": "https://github.com/saulob"
     }
   ],
-  "notes": "Version 0.1.0. Supports USA CUSA19610 1.00/1.01/1.02 (primary, most tested), Europe CUSA19620 1.00/1.01, Japan CUSA10602 1.00/1.03/1.04 and Asia CUSA18093 1.00; the non-USA builds install, boot and pass focused compatibility checks but have not been played start to finish. TRG launcher with package installer. No game files are included."
+  "links": [
+    {
+      "label": "Latest release",
+      "url": "https://github.com/saulob/13-sentinels-aegis-rim-pc/releases/latest"
+    },
+    {
+      "label": "Reddit announcement",
+      "url": "https://www.reddit.com/r/recomps/comments/1xre25o/13_sentinels_aegis_rim_native_pc_port_released/"
+    }
+  ],
+  "tags": [
+    "launcher",
+    "Vulkan",
+    "OpenGL",
+    "Direct3D 11",
+    "4K",
+    "60 FPS",
+    "multi-region"
+  ],
+  "notes": "Public native Windows release with an experimental Linux/Steam Deck AppImage. Supports nine PS4 builds across USA, Europe, Japan and Asia: CUSA19610 1.00/1.01/1.02, CUSA19620 1.00/1.01, CUSA10602 1.00/1.03/1.04 and CUSA18093 1.00. Includes the TRG launcher and package installer, Install Update and Remove Update, Vulkan with experimental OpenGL and Direct3D 11 on Windows, render resolutions up to 4K using the PS4 Pro path, 60 FPS, Xbox controller prompts, local trophies, Skip Intro, Exit Game, Bug Report, a self-updater and portable user data. CUSA19610 USA has received the most gameplay testing; the other regions have passed focused compatibility checks but have not been played start to finish. No game files are included."
 }
