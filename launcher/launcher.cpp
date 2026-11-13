@@ -1476,6 +1476,38 @@ TsrLauncherResult ExplainInWindow(const char* topic, const char* cause, const ch
 }
 
 // Play without the launcher on screen: the same checks, explained in a window of its own.
+// The launcher applies the saved controller icons when it opens (ApplySavedPrompts). A run that skips it
+// (show_launcher off, --tsr-skip-launcher) applies them here, so the game shows what was chosen.
+void ApplySavedPromptsWithoutWindow(const GamePaths& paths, const GameCheck& check, const LauncherSettings& settings) {
+    if (check.state != GameFileState::kValid || !check.build) {
+        return;
+    }
+    const GameBuild& build = *check.build;
+    const PromptStyle saved =
+        ParsePromptStyle(settings.Get(kControllerIconsKey, kPromptsPlayStation)).value_or(PromptStyle::kPlayStation);
+    const PromptState state = InstalledPromptState(paths.app0, build, XboxPromptsPatch(build));
+    if ((saved == PromptStyle::kXbox ? PromptState::kXbox : PromptState::kPlayStation) == state) {
+        return;
+    }
+    const std::optional<BlockPatch> patch = ParseBlockPatch(XboxPromptsPatch(build));
+    const bool xbox_available = patch && PromptPatchFits(paths.app0, build, *patch);
+    const PromptStyle wanted = xbox_available ? saved : PromptStyle::kPlayStation;
+    if ((wanted == PromptStyle::kXbox ? PromptState::kXbox : PromptState::kPlayStation) == state) {
+        return;
+    }
+    const GameRoots roots = RootsOf(paths);
+    std::vector<std::filesystem::path> linked;
+    for (const GameBuild* other : PreparedBuilds(roots)) {
+        if (other != &build) {
+            linked.push_back(BuildPaths(roots, *other).app0);
+        }
+    }
+    Log("controller icons (launcher skipped): applying the saved choice (%s)", PromptStyleKey(wanted));
+    const PromptsResult result = SetPromptStyle(paths.app0, build, wanted, XboxPromptsPatch(build), {}, linked);
+    Log("controller icons: %s%s%s", result.ok ? "applied" : "not applied", result.detail.empty() ? "" : ": ",
+        result.detail.c_str());
+}
+
 TsrLauncherResult PlayOrExplain(const TsrLauncherConfig& config, const LauncherSettings& settings) {
     char cause[320] = "", advice[320] = "";
     if (config.check_graphics && !config.check_graphics(cause, sizeof(cause), advice, sizeof(advice))) {
@@ -1504,6 +1536,9 @@ extern "C" TsrLauncherResult tsr_launcher_run(const TsrLauncherConfig* config) {
     const bool shift = ShiftHeldAtStart() || config->force_show != 0;
     if (!LauncherWanted(ready, show_setting, shift, config->skip_once != 0)) {
         Log("skipped (show_launcher %s%s)", show_setting ? "on" : "off", config->skip_once ? ", skip requested" : "");
+        if (ready) {
+            ApplySavedPromptsWithoutWindow(paths, check, settings);
+        }
         return PlayOrExplain(*config, settings);
     }
     Log("settings file %s", Utf8(settings.file()).c_str());
