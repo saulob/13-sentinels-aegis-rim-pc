@@ -50,6 +50,12 @@ typedef struct {
 /* 0 when the executable's folder is unknown, a path does not fit or TSR_GAME_BUILD cannot be used. */
 int tsr_resolve_paths(const TsrPathRequest *request, TsrPaths *paths);
 
+/* Headless installation (tsr --install <package.pkg|game folder>): the launcher's installer, progress on stdout.
+ * 0 when installed or already up to date; otherwise 1, with the reason in `detail`. */
+int tsr_install_game(const char *source, const char *app0, const char *image_dir, char *detail, size_t detail_size);
+/* Headless readiness check (tsr --check-game): 1 when the game files are ready to play, `detail` says which build. */
+int tsr_check_game(const char *app0, const char *image_dir, char *detail, size_t detail_size);
+
 /* The folder holding this run's log: the log_file's parent when one is given, else logs_dir. 0 when
  * neither yields a path. */
 int tsr_logs_directory(const char *logs_dir, const char *log_file, char *out, size_t size);

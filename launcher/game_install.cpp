@@ -1,5 +1,9 @@
 #include "game_install.h"
 
+#include <cstdio>
+
+#include "tsr_launcher.h"
+
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -1040,3 +1044,55 @@ InstallMessage DescribeInstall(const InstallResult& result) {
 }
 
 } // namespace tsr
+
+// Headless installation from the player's package or extracted game folder (tsr --install), with progress on stdout:
+// the launcher's installer, for front ends that install the game without opening the launcher window.
+extern "C" int tsr_install_game(const char* source, const char* app0, const char* image_dir, char* detail,
+                                size_t detail_size) {
+    tsr::InstallHooks hooks;
+    hooks.phase = [](const char* phase) {
+        std::printf("Installing: %s\n", phase);
+        std::fflush(stdout);
+    };
+    hooks.progress = [](uint64_t done, uint64_t total) {
+        static int last = -1;
+        const int percent = total ? static_cast<int>(done * 100 / total) : 0;
+        if (percent / 5 != last) {
+            last = percent / 5;
+            std::printf("  %3d%%  %llu / %llu MB\n", percent, static_cast<unsigned long long>(done >> 20),
+                        static_cast<unsigned long long>(total >> 20));
+            std::fflush(stdout);
+        }
+        return true;
+    };
+    const tsr::GamePaths paths{tsr::PathFromUtf8(app0 ? app0 : ""), tsr::PathFromUtf8(image_dir ? image_dir : "")};
+    const tsr::InstallResult result = tsr::InstallGame(tsr::PathFromUtf8(source ? source : ""), tsr::RootsOf(paths), hooks);
+    const tsr::InstallMessage message = tsr::DescribeInstall(result);
+    if (!result.recognition.empty()) {
+        std::printf("%s\n", result.recognition.c_str());
+    }
+    std::printf("%s: %s. %s\n", result.ok() ? "Installed" : "Install failed", message.title.c_str(), message.text.c_str());
+    if (!result.detail.empty()) {
+        std::printf("  %s\n", result.detail.c_str());
+    }
+    if (!result.ok()) {
+        for (const std::string& line : result.diagnostics) {
+            std::printf("%s\n", line.c_str());
+        }
+    }
+    if (detail && detail_size) {
+        std::snprintf(detail, detail_size, "%s", message.title.c_str());
+    }
+    return result.ok() ? 0 : 1;
+}
+
+// Headless readiness check (tsr --check-game): 1 when the active build's files are ready to play.
+extern "C" int tsr_check_game(const char* app0, const char* image_dir, char* detail, size_t detail_size) {
+    const tsr::GamePaths paths{tsr::PathFromUtf8(app0 ? app0 : ""), tsr::PathFromUtf8(image_dir ? image_dir : "")};
+    const tsr::GameCheck check = tsr::CheckGameFiles(paths);
+    if (detail && detail_size) {
+        std::snprintf(detail, detail_size, "%s%s%s", check.build ? check.build->label : "",
+                      check.build && !check.detail.empty() ? ": " : "", check.detail.c_str());
+    }
+    return check.state == tsr::GameFileState::kValid ? 1 : 0;
+}
