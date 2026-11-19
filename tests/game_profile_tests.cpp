@@ -809,6 +809,87 @@ void WriteSfoOnlyPackage(const fs::path& file, const std::string& sfo) {
     Write(file, pkg + entry + sfo);
 }
 
+void TestEncryptedPackageMetadata(const fs::path& scratch) {
+    // This metadata-only fixture calls Open(), so dk3 retains its zero-initialized value.
+    struct Case {
+        uint32_t size;
+        bool encrypted, truncated;
+    };
+    constexpr Case cases[] = {{532, true, false}, {32, true, false}, {5, true, false},
+                              {532, true, true}, {5, false, false}};
+    for (size_t i = 0; i < std::size(cases); ++i) {
+        const auto [size, encrypted, truncated] = cases[i];
+        const fs::path root = scratch / ("metadata-" + std::to_string(i));
+        const fs::path path = root / "metadata.pkg";
+        WriteSfoOnlyPackage(path, Sfo({{"TITLE_ID", "TEST00000"}}));
+        std::string pkg = Read(path);
+        const uint32_t table_offset = uint32_t(pkg.size());
+        std::string entry;
+        for (uint32_t word : {0x0403u, 0u, encrypted ? 0x80000000u : 0u, 0u, table_offset + 64, size}) {
+            AppendBe32(entry, word);
+        }
+        entry.resize(32, '\0');
+
+        std::vector<uint8_t> plaintext(size, 0x5a);
+        if (size == 532) {
+            uint8_t footer[20];
+            if (!crypto::Sha1(plaintext.data(), 512, footer)) {
+                CHECK(false);
+                return;
+            }
+            std::copy_n(footer, 20, plaintext.begin() + 512);
+        }
+        auto stored = plaintext;
+        if (encrypted) {
+            stored.resize((size + 15) & ~uint32_t(15), 0);
+            uint8_t seed[64]{}, ivkey[32];
+            std::memcpy(seed, entry.data(), entry.size());
+            crypto::AesKey aes;
+            if (!crypto::Sha256(seed, sizeof(seed), ivkey) ||
+                !aes.Init(crypto::AesMode::kCbc, ivkey + 16) ||
+                !aes.Encrypt(stored.data(), stored.size(), ivkey)) {
+                CHECK(false);
+                return;
+            }
+        }
+        if (truncated) stored.resize(size);
+        pkg += pkg.substr(0x1000, 32) + entry;
+        pkg.append(reinterpret_cast<const char*>(stored.data()), stored.size());
+        const auto put32 = [&](size_t at, uint32_t value) {
+            std::string be;
+            AppendBe32(be, value);
+            pkg.replace(at, 4, be);
+        };
+        put32(0x10, 2);
+        put32(0x18, table_offset);
+        put32(0x434, uint32_t(pkg.size()));
+        Write(path, pkg);
+
+        Package package;
+        const auto opened = package.Open(path);
+        CHECK(opened.ok());
+        if (!opened.ok()) continue;
+        const fs::path out = root / "extracted";
+        const fs::path binding = out / "sce_sys" / "npbind.dat";
+        const auto extracted = package.Extract(out, {});
+        if (truncated) {
+            CHECK(extracted.code == PackageResult::kReadFailed);
+            CHECK(!fs::exists(binding));
+            continue;
+        }
+        CHECK(extracted.ok());
+        const auto raw = Read(binding);
+        const std::vector<uint8_t> actual(raw.begin(), raw.end());
+        CHECK(actual == plaintext);
+        CHECK(HexSha256(actual) == HexSha256(plaintext));
+        if (size == 532 && actual.size() == 532) {
+            uint8_t footer[20];
+            CHECK(crypto::Sha1(actual.data(), 512, footer) &&
+                  std::equal(std::begin(footer), std::end(footer), actual.begin() + 512));
+        }
+    }
+}
+
 const GameBuild& BuildByFolder(std::string_view folder) {
     for (const GameBuild& build : SupportedBuilds()) {
         if (folder == build.folder) return build;
@@ -1134,6 +1215,7 @@ int main() {
     fs::create_directories(scratch);
     TestProfile();
     TestPackageIdentity();
+    TestEncryptedPackageMetadata(scratch);
     TestFinishedGameIdentity();
     TestStageUpdateKeepsBase(scratch);
     TestLanguages(scratch);

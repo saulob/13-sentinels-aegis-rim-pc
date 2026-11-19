@@ -9,6 +9,7 @@
 #include <array>
 #include <cstring>
 #include <fstream>
+#include <limits>
 #include <vector>
 
 #include "crypto.h"
@@ -251,10 +252,12 @@ bool RsaDecrypt(const RsaKeyset& keyset, const uint8_t* cipher, std::array<uint8
     return true;
 }
 
-// AES-128-CBC with the IV and key from SHA-256(entry || dk3), in place. A partial last block stays as it is.
+// AES-128-CBC with the IV and key from SHA-256(entry || dk3), in place. The input must contain complete blocks.
 bool DecryptWithIvKey(const uint8_t (&ivkey)[32], uint8_t* data, size_t size) {
-    const size_t whole = size & ~size_t(15);
-    if (whole == 0) {
+    if (size % 16 != 0) {
+        return false;
+    }
+    if (size == 0) {
         return true;
     }
     AesKey key;
@@ -263,7 +266,7 @@ bool DecryptWithIvKey(const uint8_t (&ivkey)[32], uint8_t* data, size_t size) {
     }
     uint8_t iv[16];
     std::memcpy(iv, ivkey, sizeof(iv));
-    return key.Decrypt(data, whole, iv);
+    return key.Decrypt(data, size, iv);
 }
 
 bool WriteWholeFile(const fs::path& path, const uint8_t* data, size_t size) {
@@ -716,17 +719,29 @@ PackageResult Package::Extract(const fs::path& out, const std::function<bool(uin
         if (entry.id < kFirstMetadataEntry) {
             continue;
         }
-        Bytes data(entry.size);
+        const bool encrypted = (entry.flags1 & kEntryEncrypted) != 0;
+        // The table records plaintext length. CBC stores a complete final block.
+        const uint64_t plaintext_size = entry.size;
+        if (encrypted && plaintext_size > std::numeric_limits<uint64_t>::max() - 15) {
+            return Fail(PackageResult::kReadFailed, "entry " + std::to_string(entry.id) + " size overflows");
+        }
+        const uint64_t stored_size = encrypted ? (plaintext_size + 15) & ~uint64_t(15) : plaintext_size;
+        Bytes data;
+        if (entry.offset > p.file_size || stored_size > p.file_size - entry.offset ||
+            stored_size > data.max_size()) {
+            return Fail(PackageResult::kReadFailed, "entry " + std::to_string(entry.id) + " is outside the package");
+        }
+        data.resize(static_cast<size_t>(stored_size));
         if (!p.ReadAt(entry.offset, data.data(), data.size())) {
             return Fail(PackageResult::kReadFailed, "cannot read entry " + std::to_string(entry.id));
         }
         uint8_t ivkey[32];
-        if ((entry.flags1 & kEntryEncrypted) &&
+        if (encrypted &&
             (!p.IvKey(entry, ivkey) || !DecryptWithIvKey(ivkey, data.data(), data.size()))) {
             return Fail(PackageResult::kUnsupported, "cannot decrypt entry " + std::to_string(entry.id));
         }
         const fs::path target = out / "sce_sys" / PathFromUtf8(EntryName(entry.id));
-        if (!WriteWholeFile(target, data.data(), data.size())) {
+        if (!WriteWholeFile(target, data.data(), entry.size)) {
             return Fail(PackageResult::kWriteFailed, "cannot write " + Utf8(target));
         }
     }
